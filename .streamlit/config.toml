@@ -1,0 +1,13 @@
+[theme]
+base = "dark"
+backgroundColor = "#0E0F0C"
+secondaryBackgroundColor = "#1A1B17"
+primaryColor = "#C8F135"
+textColor = "#F4F5F0"
+# "sans serif" is one of the three base keywords Streamlit's theme engine accepts
+# here; the actual geometric-sans font stack (system-local only, no network
+# fetch -- see golden rule 2) is layered on top via the app's own CSS block.
+font = "sans serif"
+
+[server]
+headless = true

@@ -1,0 +1,17 @@
+window,ticker,role,label,first_available,last_available,window_return_pct,max_drawdown_pct,truncated_start
+dotcom,^GSPC,cap_weighted,S&P 500 (cap-weighted),2000-03-01,2002-10-31,-35.8,-49.1,False
+dotcom,^IXIC,nasdaq,Nasdaq Composite,2000-03-01,2002-10-31,-72.2,-77.9,False
+dotcom,IWD,value,Value (Russell 1000 Value),2000-05-26,2002-10-31,-14.8,-34.1,True
+dotcom,EFA,international,International (EFA),2001-08-27,2002-10-31,-22.9,-29.8,True
+2022,SPY,cap_weighted,SPY (cap-weighted),2022-01-03,2022-10-31,-18.2,-24.5,False
+2022,QQQ,nasdaq,QQQ (Nasdaq-100),2022-01-03,2022-10-31,-30.5,-34.8,False
+2022,VTV,value,Value (VTV),2022-01-03,2022-10-31,-4.9,-17.0,False
+2022,EFA,international,International (EFA),2022-01-03,2022-10-31,-23.4,-28.7,False
+2022,TLT,bonds,Bonds (TLT),2022-01-03,2022-10-31,-32.3,-34.9,False
+2022,GLD,gold,Gold (GLD),2022-01-03,2022-10-31,-9.8,-21.0,False
+gfc,^GSPC,cap_weighted,S&P 500 (^GSPC),2007-10-01,2009-03-31,-48.4,-56.8,False
+gfc,QQQ,nasdaq,QQQ (Nasdaq-100),2007-10-01,2009-03-31,-41.3,-53.4,False
+gfc,IWD,value,Value (IWD),2007-10-01,2009-03-31,-51.1,-59.8,False
+gfc,EFA,international,International (EFA),2007-10-01,2009-03-31,-52.4,-61.0,False
+gfc,TLT,bonds,Bonds (TLT),2007-10-01,2009-03-31,26.4,-17.0,False
+gfc,GLD,gold,Gold (GLD),2007-10-01,2009-03-31,22.2,-29.4,False

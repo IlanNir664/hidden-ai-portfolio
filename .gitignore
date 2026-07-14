@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Streamlit secrets (never commit; config.toml IS committed, secrets.toml is not)
+.streamlit/secrets.toml
+
+# Logs and OS/editor cruft
+*.log
+.DS_Store
+Thumbs.db
+.Rhistory
+
+# Scratch/screenshot artifacts
+page-*.jpg
+*.tmp
+*.bak
+
+# Claude Code local tool settings (contains local machine paths, not project config)
+.claude/
+
+*.docx
