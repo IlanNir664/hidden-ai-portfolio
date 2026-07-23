@@ -98,11 +98,26 @@ DONUT_GROUP_LABELS = {
 }
 DONUT_LABEL_MIN_PCT = 5.0  # segments below this weight get no outside label, hover only
 
-DEFAULT_SELECTED = ["SPY", "TLT"]
-DEFAULT_WEIGHTS = {"SPY": 60.0, "TLT": 40.0}
+# Default portfolio shown on first visit -- a diversified DIY-style mix (broad
+# market core + a couple of single-stock/sector tilts), not the research
+# project's 60/40 reference portfolio. Defined ONCE here; the multiselect
+# default, the weight-editor's starting values, and the "Modern DIY mix" preset
+# below all read from this single dict so they can never drift out of sync.
+# Dict order matters -- it's the order tickers appear as multiselect tags and
+# weight-editor rows on first load. Values are percent (0-100), summing to 100.
+DEFAULT_PORTFOLIO = {
+    "NVDA": 5.0,
+    "QQQM": 14.0,
+    "VOO": 55.0,
+    "AAPL": 3.0,
+    "MU": 3.0,
+    "SCHD": 5.0,
+    "VXUS": 15.0,
+}
 
 PRESETS = {
-    "60/40 (SPY/TLT) -- default": {"SPY": 60.0, "TLT": 40.0},
+    "Modern DIY mix (default)": dict(DEFAULT_PORTFOLIO),
+    "60/40 (SPY/TLT)": {"SPY": 60.0, "TLT": 40.0},
     "100% QQQ -- max AI exposure": {"QQQ": 100.0},
     "100% NVDA -- direct AI holding": {"NVDA": 100.0},
     "Low-AI mix (utilities/staples/REITs/dividend)": {"XLU": 25.0, "XLP": 25.0, "VNQ": 25.0, "SCHD": 25.0},
@@ -481,6 +496,16 @@ def render_portfolio_donut(weights: dict, beta_pct: float):
 # numbers). No new math, just phrasing.
 # ============================================================================
 
+def format_ticker_list(tickers: list, max_named: int = 3) -> str:
+    """'A, B, C' for a short list; 'A, B, C and N others' once naming every ticker
+    would read as a wall of text (e.g. this app's own default portfolio, where 5
+    of 7 holdings have no known top-10 weight)."""
+    if len(tickers) <= max_named:
+        return ", ".join(tickers)
+    remaining = len(tickers) - max_named
+    return f"{', '.join(tickers[:max_named])} and {remaining} other{'s' if remaining != 1 else ''}"
+
+
 def nearest_reference_portfolio(user_beta_pct: float, ref_betas_pct: dict) -> str:
     """Name of the reference portfolio with the smallest |beta_AI| difference."""
     return min(ref_betas_pct, key=lambda p: abs(ref_betas_pct[p] - user_beta_pct))
@@ -753,6 +778,7 @@ with st.sidebar:
         preset = PRESETS[preset_choice]
         st.session_state["selected_tickers"] = list(preset.keys())
         st.session_state["weight_map"] = dict(preset)
+        st.session_state["weight_editor_base_tickers"] = None  # force the weight editor to resync
         st.rerun()
 
     st.markdown("---")
@@ -771,9 +797,15 @@ with st.sidebar:
 section_header("1", "Build your portfolio")
 
 if "selected_tickers" not in st.session_state:
-    st.session_state["selected_tickers"] = list(DEFAULT_SELECTED)
+    st.session_state["selected_tickers"] = list(DEFAULT_PORTFOLIO.keys())
 if "weight_map" not in st.session_state:
-    st.session_state["weight_map"] = dict(DEFAULT_WEIGHTS)
+    st.session_state["weight_map"] = dict(DEFAULT_PORTFOLIO)
+# The weight editor's OWN stable snapshot of {ticker: weight_pct} -- see the
+# st.data_editor call below for why this must be a separate thing from
+# weight_map (which tracks live edits for everything else in the app).
+if "weight_editor_base_tickers" not in st.session_state:
+    st.session_state["weight_editor_base_tickers"] = tuple(st.session_state["selected_tickers"])
+    st.session_state["weight_editor_base_weights"] = dict(st.session_state["weight_map"])
 
 with st.container(border=True):
     # Manual-entry fallback runs BEFORE the multiselect widget below is instantiated,
@@ -800,27 +832,49 @@ with st.container(border=True):
         key="selected_tickers",
     )
 
-    if set(selected) != set(st.session_state["weight_map"].keys()):
-        if selected:
-            # Equal-weight split that sums to exactly 100.00 -- a naive round(100/n, 2)
-            # per ticker drifts off 100 for any n that doesn't divide evenly (e.g. 3
-            # tickers -> 33.33 x 3 = 99.99), which would otherwise auto-trigger the
-            # "weights don't sum to 100%" error the moment a ticker is added/removed.
-            n = len(selected)
-            eq_weight = round(100.0 / n, 2)
-            eq_weights = {t: eq_weight for t in selected}
-            drift = round(100.0 - eq_weight * n, 2)
-            last_ticker = selected[-1]
-            eq_weights[last_ticker] = round(eq_weights[last_ticker] + drift, 2)
-            st.session_state["weight_map"] = eq_weights
-        else:
-            st.session_state["weight_map"] = {}
+    # Resync the weight editor's stable snapshot ONLY when the ticker selection
+    # actually changed (add/remove/preset/normalize -- the last two force this via
+    # the None sentinel below) -- not on every rerun. See the st.data_editor call
+    # below for why this matters: rebuilding its `data` from live edits every
+    # keystroke was the revert bug.
+    current_tickers = tuple(selected)
+    if st.session_state["weight_editor_base_tickers"] != current_tickers:
+        merged = fl.merge_selected_weights(list(selected), st.session_state["weight_map"])
+        st.session_state["weight_map"] = merged
+        st.session_state["weight_editor_base_tickers"] = current_tickers
+        st.session_state["weight_editor_base_weights"] = dict(merged)
 
     weights_pct_map = {}
     if selected:
+        # ROOT CAUSE of the weight-editor revert bug (diagnosed against Streamlit
+        # 1.59's st.elements.widgets.data_editor source): st.data_editor computes
+        # its *internal* widget identity via compute_and_register_element_id(...,
+        # key_as_main_identity=False, data=arrow_bytes, ...) -- so even with an
+        # explicit `key=`, that identity is a hash that includes the CONTENT of
+        # `data`. The previous code rebuilt `weight_df` from
+        # st.session_state["weight_map"] -- which the same rerun's write-back had
+        # just updated -- so every edit changed `data`'s content and therefore the
+        # widget's internal id on the NEXT rerun. The frontend's pending edit
+        # (tagged with the id from the render it was typed against) then arrived
+        # one render behind the server's freshly-recomputed id, so
+        # register_widget() found no stored state for the new id and returned an
+        # empty diff -- silently dropping that edit and re-displaying the old
+        # value. This only bit on the 2nd+ edit in a session (the 1st edit's
+        # `data` still matched the initial render's id), matching the reported
+        # "sometimes" symptom.
+        #
+        # Fix: keep `data` byte-identical across reruns unless the ticker
+        # selection itself changed (weight_editor_base_weights above, updated
+        # only on add/remove/preset/normalize) -- so the widget's id, and thus
+        # Streamlit's accumulated edited_rows diff, stays stable across any
+        # number of consecutive cell edits. Live edits are read from st.data_editor's
+        # *return value* (always correct -- Streamlit reapplies the full diff to
+        # `data` before returning it) and written into weight_map for everything
+        # else in the app to use; they deliberately do NOT feed back into
+        # weight_editor_base_weights, which is what breaks the feedback loop.
         weight_df = pd.DataFrame({
-            "ticker": selected,
-            "weight_pct": [st.session_state["weight_map"].get(t, 0.0) for t in selected],
+            "ticker": list(selected),
+            "weight_pct": [st.session_state["weight_editor_base_weights"].get(t, 0.0) for t in selected],
         })
         edited = st.data_editor(
             weight_df,
@@ -833,9 +887,12 @@ with st.container(border=True):
             hide_index=True,
             width="stretch",
         )
-        for _, row in edited.iterrows():
-            st.session_state["weight_map"][row["ticker"]] = float(row["weight_pct"])
         weights_pct_map = {row["ticker"]: float(row["weight_pct"]) for _, row in edited.iterrows()}
+        st.session_state["weight_map"] = dict(weights_pct_map)
+        st.caption(
+            "Edit a weight and press Enter (or click away) to apply it. Adding a ticker starts it "
+            "at 0% -- edit its weight, or use Normalize below once your mix sums to 100%."
+        )
 
     weights, errors, warnings_ = validate_weights(weights_pct_map)
 
@@ -849,6 +906,7 @@ with st.container(border=True):
         if total > 0:
             if st.button("Normalize weights to 100%"):
                 st.session_state["weight_map"] = {t: w / total * 100.0 for t, w in weights_pct_map.items()}
+                st.session_state["weight_editor_base_tickers"] = None  # force the weight editor to resync
                 st.rerun()
         st.stop()
 
@@ -978,7 +1036,7 @@ with st.container(border=True):
 
     if user_direct_pct is None:
         st.caption(
-            f"Naive direct weight isn't computable for this mix -- {', '.join(unresolvable)} "
+            f"Naive direct weight isn't computable for this mix -- {format_ticker_list(unresolvable)} "
             f"{'has' if len(unresolvable) == 1 else 'have'} no known top-10 holdings weight."
         )
 

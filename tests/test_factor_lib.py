@@ -180,3 +180,47 @@ def test_compute_direct_weight_pct_spy_gld_counts_gld_as_known_zero():
     direct_pct, unresolvable = fl.compute_direct_weight_pct({"SPY": 0.7, "GLD": 0.3})
     assert unresolvable == []
     assert direct_pct == pytest.approx(0.7 * fl.DIRECT_WEIGHT_PCT["SPY"], abs=1e-6)
+
+
+# --- merge_selected_weights / equal_split_weights: the X-ray app's weight-editor
+# ticker-add/remove logic, extracted out of the Streamlit widget layer specifically
+# so it's unit-testable -- see app/xray_app.py Step 1 and the revert-bug fix there.
+
+def test_equal_split_weights_sums_to_100_for_non_dividing_n():
+    """3 tickers -> 33.33/33.33/33.34, not 33.33 x 3 = 99.99 (regression test for
+    the earlier 33.33x3 remainder fix -- must not spuriously trigger the sum error)."""
+    weights = fl.equal_split_weights(["A", "B", "C"])
+    assert sum(weights.values()) == pytest.approx(100.0)
+    assert weights["A"] == pytest.approx(33.33)
+    assert weights["B"] == pytest.approx(33.33)
+    assert weights["C"] == pytest.approx(33.34)
+
+
+def test_equal_split_weights_empty():
+    assert fl.equal_split_weights([]) == {}
+
+
+def test_merge_selected_weights_preserves_weights_on_ticker_addition():
+    """Adding a ticker to an existing selection must leave the other rows' weights
+    untouched -- the exact bug the earlier equal-split-everything logic had."""
+    merged = fl.merge_selected_weights(["A", "B", "C"], {"A": 50.0, "B": 50.0})
+    assert merged == {"A": 50.0, "B": 50.0, "C": 0.0}
+
+
+def test_merge_selected_weights_preserves_weights_on_ticker_removal():
+    """Removing a ticker must leave the remaining rows' weights untouched."""
+    merged = fl.merge_selected_weights(["A"], {"A": 30.0, "B": 70.0})
+    assert merged == {"A": 30.0}
+
+
+def test_merge_selected_weights_does_not_overwrite_user_edited_values():
+    """A user-edited (non-round) weight must pass through the merge unchanged."""
+    merged = fl.merge_selected_weights(["A", "B"], {"A": 37.5, "B": 62.5})
+    assert merged == {"A": 37.5, "B": 62.5}
+
+
+def test_merge_selected_weights_falls_back_to_equal_split_when_nothing_to_preserve():
+    """A selection with zero overlap with existing_weights (e.g. the very first
+    pick from empty) gets an equal split instead of an unhelpful wall of zeros."""
+    merged = fl.merge_selected_weights(["A", "B", "C"], {})
+    assert merged == fl.equal_split_weights(["A", "B", "C"])

@@ -88,6 +88,44 @@ def compute_direct_weight_pct(weights: dict):
         return None, unresolvable
     return sum(contributions), []
 
+
+def equal_split_weights(tickers: list) -> dict:
+    """Equal-weight split across tickers, summing to exactly 100.00.
+
+    A naive round(100/n, 2) per ticker drifts off 100 for any n that doesn't
+    divide evenly (e.g. 3 tickers -> 33.33 x 3 = 99.99), which would otherwise
+    spuriously trigger a "weights don't sum to 100%" error. The leftover
+    remainder goes to the last ticker.
+    """
+    n = len(tickers)
+    if n == 0:
+        return {}
+    eq_weight = round(100.0 / n, 2)
+    weights = {t: eq_weight for t in tickers}
+    drift = round(100.0 - eq_weight * n, 2)
+    weights[tickers[-1]] = round(weights[tickers[-1]] + drift, 2)
+    return weights
+
+
+def merge_selected_weights(selected: list, existing_weights: dict) -> dict:
+    """Ticker -> weight_pct for the currently selected tickers, preserving edits.
+
+    Pure merge logic behind the X-ray app's weight editor, pulled out of the
+    widget layer so it's unit-testable without Streamlit. A ticker already
+    present in existing_weights (including one the user hand-edited) keeps its
+    value -- this is what lets adding or removing a ticker leave the remaining
+    rows untouched. A ticker with no prior weight starts at 0.0 -- except when
+    NONE of the selected tickers have a prior weight (nothing to preserve),
+    in which case the whole selection gets an equal-weight split instead of an
+    unhelpful wall of zeros (e.g. picking a fresh set of tickers from empty).
+
+    selected: ordered list of currently-selected tickers.
+    existing_weights: {ticker: weight_pct} from before this selection change.
+    """
+    if not any(t in existing_weights for t in selected):
+        return equal_split_weights(selected)
+    return {t: existing_weights.get(t, 0.0) for t in selected}
+
 # dataviz skill palette (light mode) -- shared across every chart in the project,
 # PNG or in-app, so research output and the X-ray app stay visually one system.
 COLOR_BLUE = "#2a78d6"
