@@ -1,4 +1,4 @@
-# The Hidden AI Portfolio #
+# The Hidden AI Portfolio
 
 **You think you're diversified. You're holding an AI fund.**
 
@@ -18,7 +18,8 @@ believe are diversified — plus an interactive app that measures it for *your* 
 
 1. **The S&P 500's top-10 holdings are 43% of the index today, versus 23% at the 2000
    dot-com peak** — concentration is now well above the level that preceded the last
-   great repricing.
+   great repricing. That's true even though "S&P 500" has meant the same thing, with
+   the same name, since 1990.
 2. **Every "diversified" portfolio tested carries far more AI exposure than its holdings
    sheet suggests:** QQQ moves from a 33% direct weight to 75% effective exposure, SPY
    from 34% to 50%, and VT — a whole-world fund — from 21% to **50%**.
@@ -42,14 +43,25 @@ believe are diversified — plus an interactive app that measures it for *your* 
 
 ![Portfolio X-Ray app](outputs/chart2_effective_exposure.png)
 
-The [live app](https://portfolio-xray.streamlit.app) takes any portfolio built from a
-100-ticker universe (popular ETFs + widely held single stocks) and returns:
+The [live app](https://portfolio-xray.streamlit.app) walks through the same argument
+this README makes, step by step:
 
-- its **effective AI exposure** (regression beta) vs. its **naive holdings weight**
-- where it sits **among the standard portfolios** (QQQ / SPY / VT / 60-40 / RSP)
-- its **projected outcome under four conditional scenarios** — no-bubble trend
-  continuation, 2022-style, 2008-style, and dot-com-style repricings
-- **when it became an AI fund** — a rolling 252-day beta timeline
+- **Why this exists** — the S&P 500 concentration record above, as the opening proof
+  that "diversified" funds drift in composition while their name never changes
+- **Build your portfolio** — pick from a 100-ticker universe (popular ETFs + widely
+  held single stocks), or load a preset
+- **Calculate your AI %** — your **effective AI exposure** (regression beta) vs. your
+  **naive holdings weight**, and where you sit among the standard portfolios
+  (QQQ / SPY / VT / 60-40 / RSP)
+- **Your portfolio, the last year** — what your exact mix would have realized over the
+  trailing year, against SPY, as the honest upside counterpart to the scenarios below
+- **Run the repricing simulation** — your projected outcome under four conditional
+  scenarios: no-bubble trend continuation, 2022-style, 2008-style, and dot-com-style
+  repricings, plus the "menu" of upside kept vs. downside risked
+- **Bonus** — when your portfolio became an AI fund: a rolling 252-day beta timeline
+
+Each stage reveals only once you act on the one before it — the app is built to be
+walked through, not skimmed as a wall of charts.
 
 ---
 
@@ -156,6 +168,25 @@ projection (−41%) is *worse* than its dot-com-style one (−39%)** — because
 non-epicenter shock (−59.8%) ran far deeper than 2000's (−34.1%). Being "less AI" is
 not protection against every kind of crash.
 
+### Module 4 — The Portfolio X-Ray app
+
+The app shares its computation layer (`analysis/factor_lib.py`) with Modules 1–3 —
+nothing in the app is a reimplementation. Two additions beyond the research:
+
+- **Realized performance** — alongside the four *conditional* scenarios, the app shows
+  what a portfolio's exact mix would have *actually* returned over the trailing year,
+  against SPY, so the upside isn't only ever hypothetical.
+- **A guided, step-gated flow** — rather than a wall of charts, each stage (calculate →
+  compare → simulate) reveals only once the user acts on the one before it.
+
+Along the way, an early version of the app's opening chart tried to show *recent*
+AI-basket concentration *growth* inside QQQ. That metric was tested three ways (rolling
+beta, a price-level-weighted proxy, and a corrected equal-weighted proxy) and, once a
+weighting bug was fixed, honestly showed **no consistent recent growth** — so it was
+dropped in favor of the one finding that's actually true and already rigorously
+verified: the S&P 500 concentration record in Module 1. Documented in
+[`LIMITATIONS.md`](LIMITATIONS.md) rather than quietly discarded.
+
 ---
 
 ## Techniques used
@@ -163,7 +194,8 @@ not protection against every kind of crash.
 `OLS regression (statsmodels)` · `rolling 252-day windows` · `two-factor decomposition
 with residualized orthogonal factors` · `log vs. simple return conventions` ·
 `max drawdown (running-max method)` · `SQL / SQLite data layer` · `pandas` ·
-`matplotlib + plotly` · `Streamlit` · `pytest (16 tests, incl. pipeline gate check)`
+`matplotlib + plotly` · `Streamlit` (session-state-gated progressive UI) ·
+`pytest` (gate check + regression tests)
 
 ---
 
@@ -184,7 +216,8 @@ hidden-ai-portfolio/
 ├── outputs/                   # charts, findings, per-module methodology, CSVs
 ├── tests/                     # pytest suite incl. the gate check
 ├── hidden_ai_portfolio_methodology.md
-└── LIMITATIONS.md
+├── LIMITATIONS.md
+└── LICENSE
 ```
 
 The app and the research **share one implementation** (`factor_lib.py`) — the numbers in
@@ -201,7 +234,7 @@ pip install -r requirements.txt
 
 streamlit run app/xray_app.py     # the app
 python analysis/m1_concentration.py   # reproduce the research
-pytest                                 # 16 tests, incl. the gate check
+pytest                                 # incl. the gate check
 ```
 
 The database ships with the repo, so everything runs offline from a clean clone.
@@ -224,6 +257,8 @@ Written alongside the analysis, not after it. Full list in [`LIMITATIONS.md`](LI
 - **The rest-of-market factor isn't investable.** It's a modeling device (an OLS
   residual), and multiplying a calm-period beta by a crash-scale shock is a
   simplification.
+- **A concentration-growth metric was tested for the app and didn't hold up** — see
+  Module 4 above. Included for transparency, not hidden.
 - **Scenario ≠ forecast**, and point-in-time figures drift with the market.
 
 ---
@@ -236,7 +271,7 @@ Written alongside the analysis, not after it. Full list in [`LIMITATIONS.md`](LI
 | M1 — hidden concentration | ✅ |
 | M2 — crash replays (2000 / 2008 / 2022) | ✅ |
 | M3 — conditional scenario projection | ✅ |
-| M4 — the Portfolio X-Ray app | ✅ |
+| M4 — the Portfolio X-Ray app (+ guided step-by-step flow) | ✅ |
 | Basket sensitivity (v2 cap-weighted, v3 ±TSLA/AMD/PLTR) | planned |
 | Bootstrap stress distributions; hindsight-free 2015 basket | planned |
 
