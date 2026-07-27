@@ -40,6 +40,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "analysis"))
 sys.path.insert(0, str(PROJECT_ROOT / "data"))
 import factor_lib as fl  # noqa: E402
 import pull_prices as pp  # noqa: E402
+import m1_concentration as m1  # noqa: E402 -- Step 0 reuses CONCENTRATION_HISTORY, not a re-pull
 
 M1_TABLE_PATH = PROJECT_ROOT / "outputs" / "m1_beta_table.csv"
 M3_TABLE_PATH = PROJECT_ROOT / "outputs" / "m3_scenario_table.csv"
@@ -188,30 +189,21 @@ def get_spy_rolling_beta(prices: pd.DataFrame) -> pd.Series:
     return fl.rolling_beta(spy_log, ai_log, fl.WINDOW)
 
 
-PROOF_TICKER = "QQQ"               # NOT QQQM, which only launched in 2020 -- QQQ has traded since 1999
-PROOF_WINDOW_START = "2015-01-01"  # Step 0's real-world proof point window: full available history
-PROOF_SMOOTHING_DAYS = 7           # drawn-line-only smoothing -- see render_qqq_proof_chart
-
-
+# Step 0's proof point (v3): reuses Module 1's own S&P 500 top-10 concentration
+# anchor-year history (m1_concentration.CONCENTRATION_HISTORY) instead of a
+# DIY price-ratio proxy. Two prior constructions (QQQ beta; AI-basket vs.
+# rest-of-QQQ price ratio, in both its 1-share-each and equal-weighted forms)
+# were investigated and dropped -- see LIMITATIONS.md -- because a from-price
+# proxy kept surfacing either window-choice sensitivity or construction
+# artifacts. CONCENTRATION_HISTORY is a real, externally-sourced statistic
+# (RBC Wealth Management / press consensus / CryptoBriefing -- see
+# m1_concentration.py's own sourcing comment), not something computed here.
 @st.cache_data
-def get_qqq_proof_series(prices: pd.DataFrame) -> pd.Series:
-    """QQQ's rolling 252-day AI-basket beta since PROOF_WINDOW_START -- reuses
-    factor_lib.rolling_beta (the same machinery get_spy_rolling_beta above and
-    the Step 6 bonus chart already use), just sliced to a fixed, defensible
-    full-history window (the whole available range, not a cherry-picked local
-    minimum as the reference point). QQQ is used specifically because it has
-    traded since 1999 and so actually covers this range -- verified against
-    the DB: the AI basket's own earliest fully-covered date is 2012-05-21
-    (META, the youngest basket member, IPO'd 2012-05-18), so the 252-day
-    rolling window is available from 2013-05-22 onward -- comfortably before
-    2015-01-01, no truncation needed.
-    Independent of any user input, so it's cached like the rest of this section.
+def get_concentration_history_df() -> pd.DataFrame:
+    """Module 1's S&P 500 top-10 concentration anchor years as a DataFrame --
+    no new data pull, just reshaping m1.CONCENTRATION_HISTORY for Plotly.
     """
-    simple_returns = get_simple_returns(prices)
-    ai_log = get_ai_log(prices)
-    qqq_log = fl.to_log_returns(simple_returns[PROOF_TICKER])
-    rolling = fl.rolling_beta(qqq_log, ai_log, fl.WINDOW)
-    return rolling.loc[PROOF_WINDOW_START:]
+    return pd.DataFrame(m1.CONCENTRATION_HISTORY, columns=["year", "pct", "source"])
 
 
 # ============================================================================
@@ -272,48 +264,41 @@ def _apply_base_layout(fig: go.Figure, y_title: str = None, x_title: str = None,
     return fig
 
 
-def render_qqq_proof_chart(series: pd.Series, start_pct: float, current_pct: float,
-                            low_pct: float, low_date, high_pct: float, high_date):
-    """Step 0's real-world proof point: QQQ's rolling 252-day AI-basket beta
-    over its full available history since PROOF_WINDOW_START, in the same
-    lime gradient-glow line style as the hero sparkline / Step 6 bonus
-    rolling-beta chart -- but with an EXPLICIT y-axis range set from the
-    series' own min/max, not left to autorange (see render_realized_return_chart
-    for why fill="tozeroy" would otherwise distort this).
-
-    The DRAWN line is a PROOF_SMOOTHING_DAYS-day rolling mean of the raw beta
-    series (min_periods=1, so the line has no gap at the very start) -- purely
-    for visual clarity over a decade of daily points. It is NEVER used for the
-    reported numbers: start_pct/current_pct/low_pct/high_pct are all computed
-    by the caller from the RAW series and just passed in here already in
-    percent. The low/high annotation dots are positioned using the smoothed
-    line's value at the raw extreme's date (checked against the real data:
-    under 1pp of difference) so the dot sits exactly on the drawn line, while
-    the annotation TEXT is still the true raw extreme value -- never the
-    smoothed one.
+def render_concentration_history_chart(history_df: pd.DataFrame):
+    """S&P 500 top-10 concentration, anchor years -- Module 1's Chart 1 data,
+    reused directly (get_concentration_history_df), not recomputed. Same
+    evenly-spaced categorical x-axis convention as m1_concentration.py's own
+    plot_chart1: the gaps between anchor years are uneven (5,5,5,5,5,1), and a
+    true year-linear scale would crowd the final two labels illegibly close
+    together. Redrawn in this app's dark lime house style instead of the
+    published PNG's light-surface palette (see this file's module docstring on
+    why the two never need to match), with the same EXPLICIT y-axis range fix
+    used by the other Step 0 / Step 3 charts.
     """
-    smoothed = series.rolling(PROOF_SMOOTHING_DAYS, min_periods=1).mean()
-    y = smoothed.values * 100
-    y_min, y_max = float(y.min()), float(y.max())
-    y_pad = (y_max - y_min) * 0.12 or 1.0
+    years = history_df["year"].tolist()
+    pcts = history_df["pct"].tolist()
+    positions = list(range(len(years)))
+
+    y_min, y_max = min(pcts), max(pcts)
+    y_pad = (y_max - y_min) * 0.35 or 1.0
 
     fig = go.Figure()
     fig.add_scatter(
-        x=smoothed.index, y=y, mode="lines",
-        line=dict(color=LIME, width=2), fill="tozeroy",
+        x=positions, y=pcts, mode="lines+markers+text", text=[f"{p:.0f}%" for p in pcts],
+        textposition="top center", textfont=dict(color=TEXT_PRIMARY, size=12),
+        line=dict(color=LIME, width=2.5), marker=dict(color=LIME, size=8, line=dict(color=BG_CARD, width=1.5)),
+        fill="tozeroy",
         fillgradient=dict(type="vertical", colorscale=[[0, "rgba(200,241,53,0.32)"], [1, "rgba(200,241,53,0)"]]),
-        hovertemplate="%{x|%Y-%m-%d}<br>QQQ AI beta (7d smoothed): %{y:.0f}%<extra></extra>",
+        customdata=years, hovertemplate="%{customdata}<br>Top-10 share: %{y:.1f}%<extra></extra>",
     )
-    fig.add_annotation(x=smoothed.index[0], y=y[0], text=f"{start_pct:.0f}%", showarrow=False,
-                        yanchor="bottom", yshift=14, font=dict(color=MUTED_GRAY_2, size=12))
-    fig.add_annotation(x=low_date, y=smoothed.loc[low_date] * 100, text=f"{low_pct:.0f}%", showarrow=False,
-                        yanchor="top", yshift=-12, font=dict(color=MUTED_GRAY_2, size=11))
-    fig.add_annotation(x=high_date, y=smoothed.loc[high_date] * 100, text=f"{high_pct:.0f}%", showarrow=False,
-                        yanchor="bottom", yshift=12, font=dict(color=MUTED_GRAY_2, size=11))
-    fig.add_annotation(x=smoothed.index[-1], y=y[-1], text=f"{current_pct:.0f}%", showarrow=False,
-                        xanchor="left", xshift=10, font=dict(color=LIME, size=14))
-    _apply_base_layout(fig, y_title="252-day rolling AI beta (%), 7-day smoothed", height=260)
-    fig.update_layout(margin=dict(t=28, l=56, r=64, b=36))
+    dotcom_idx = years.index(2000)
+    fig.add_annotation(x=positions[dotcom_idx], y=pcts[dotcom_idx], text="dot-com peak", showarrow=False,
+                        yanchor="top", yshift=-20, font=dict(color=MUTED_GRAY_2, size=11))
+    fig.add_annotation(x=positions[-1], y=pcts[-1], text="today", showarrow=False,
+                        yanchor="top", yshift=-20, font=dict(color=LIME, size=11))
+    _apply_base_layout(fig, y_title="Top-10 share of S&P 500 market cap (%)", height=280)
+    fig.update_xaxes(tickmode="array", tickvals=positions, ticktext=[str(y) for y in years])
+    fig.update_layout(margin=dict(t=40, l=56, r=24, b=40))
     fig.update_yaxes(range=[y_min - y_pad, y_max + y_pad])
     return fig
 
@@ -901,32 +886,27 @@ with st.container(border=True):
         "shifts underneath it."
     )
 
-    # All four reported numbers come from the RAW (unsmoothed) series -- the
-    # chart's drawn line is smoothed for readability, but the numbers a reader
-    # can quote are never touched by that smoothing. Full available history,
-    # not a cherry-picked local minimum, is the reference window (per
-    # LIMITATIONS.md-style honesty: see render_qqq_proof_chart's docstring).
-    qqq_series = get_qqq_proof_series(prices)
-    qqq_start_pct = qqq_series.iloc[0] * 100
-    qqq_start_year = qqq_series.index[0].year
-    qqq_current_pct = qqq_series.iloc[-1] * 100
-    qqq_low_pct = qqq_series.min() * 100
-    qqq_low_date = qqq_series.idxmin()
-    qqq_high_pct = qqq_series.max() * 100
-    qqq_high_date = qqq_series.idxmax()
+    # Reuses Module 1's own sourced concentration history (RBC Wealth
+    # Management / press consensus / CryptoBriefing -- see
+    # m1_concentration.py's CONCENTRATION_HISTORY comment) instead of a DIY
+    # price-ratio proxy. Two prior from-price constructions were investigated
+    # and dropped for this panel; see LIMITATIONS.md, Module 4.
+    history_df = get_concentration_history_df()
+    hist_fig = render_concentration_history_chart(history_df)
+    st.plotly_chart(hist_fig, theme=None, width="stretch", config=PLOTLY_CONFIG)
 
-    qqq_fig = render_qqq_proof_chart(
-        qqq_series, qqq_start_pct, qqq_current_pct, qqq_low_pct, qqq_low_date, qqq_high_pct, qqq_high_date
-    )
-    st.plotly_chart(qqq_fig, theme=None, width="stretch", config=PLOTLY_CONFIG)
+    hist_start_year = int(history_df["year"].iloc[0])
+    hist_early_pct = history_df.loc[history_df["year"] == 1990, "pct"].iloc[0]
+    hist_early_end_year = int(history_df.loc[history_df["year"] <= 2015, "year"].max())
+    hist_current_pct = history_df["pct"].iloc[-1]
     st.caption(
-        f"QQQ -- one of the most widely held, passively marketed Nasdaq-100 funds -- started "
-        f"this decade with {qqq_start_pct:.0f}% measured AI-basket exposure in {qqq_start_year}, "
-        f"swung between a low of {qqq_low_pct:.0f}% ({qqq_low_date.strftime('%b %Y')}) and a high of "
-        f"{qqq_high_pct:.0f}% ({qqq_high_date.strftime('%b %Y')}), and sits at {qqq_current_pct:.0f}% "
-        f"today -- concentration was already substantial years before \"AI\" became the mainstream "
-        f"investment story around 2022-23. Line is lightly smoothed (7-day mean) for readability; "
-        f"the figures above are the true, unsmoothed readings."
+        f"The S&P 500 has been marketed as \"a broad, diversified market index\" since "
+        f"{hist_start_year} -- its name and stated strategy have never changed. But the share of "
+        f"the index concentrated in its top 10 holdings has: {hist_early_pct:.0f}% for a "
+        f"quarter-century ({hist_start_year}-{hist_early_end_year}), now {hist_current_pct:.0f}% "
+        f"today -- nearly double the level that preceded the 2000 dot-com crash. This is "
+        f"composition drift, happening in plain sight, inside the single most widely held index "
+        f"in the world."
     )
 
     st.markdown("**This app measures the same thing for any portfolio you build below.**")

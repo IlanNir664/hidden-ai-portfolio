@@ -227,3 +227,18 @@ alongside the analysis, not after -- per the project's rigor rule (see
   basket itself," not as a weight that could describe a real allocation. The
   app shows an explicit warning whenever this happens rather than presenting
   the number as an ordinary percentage.
+- **Step 0's proof point went through two DIY price-ratio constructions before
+  settling on Module 1's own sourced concentration history.** Both were
+  investigated and dropped: (1) AI-basket fixed-share value vs. QQQ's own
+  price double-counts the basket (QQQ's return already embeds the basket's
+  contribution); (2) AI-basket vs. a "rest of QQQ" proxy basket, built as
+  "1-share-of-each" dollar value, let a handful of high-priced members (e.g.
+  MU rising from ~$465 to ~$1213 over ~10 weeks in 2026) swing the whole
+  proxy regardless of genuine concentration dynamics -- confirmed as a
+  construction artifact by rebuilding the same comparison equal-weighted
+  (average of each ticker's own return, matching `ai_basket_simple_returns`'s
+  existing convention), which erased the effect and showed flat-to-negative
+  results at every window tested (12/24/36 months). Step 0 now reuses
+  `m1_concentration.CONCENTRATION_HISTORY` (externally sourced: RBC Wealth
+  Management, press consensus, CryptoBriefing) instead of computing anything
+  from `data/prices.db` for this panel.
