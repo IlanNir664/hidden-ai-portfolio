@@ -181,6 +181,14 @@ alongside the analysis, not after -- per the project's rigor rule (see
   AI-basket-driven, even though the measured beta is real. The app surfaces
   R² with a plain-language caption for exactly this reason, and calls it out
   explicitly whenever R² is below 0.3.
+- **The rolling 252-day beta chart can show step-like artifacts, not just smooth
+  drift.** A single extreme-return day (e.g. the AI basket's -13.9% on
+  2020-03-16, during the COVID crash) entering the trailing window as the
+  newest observation shifts the beta abruptly; the same day produces a mirror-
+  image shift exactly 252 trading days later when it drops off the window's
+  trailing edge -- producing a sharp jump, a ~252-day flat shelf, and a sharp
+  drop that is a real artifact of the trailing-window mechanism, not a data or
+  computation error.
 - **The short-overlapping-history warning path is defended but not reachable
   by any currently-cached ticker.** The app warns when a portfolio's common
   history with the AI basket is under the standard 252-day window. Every

@@ -90,6 +90,52 @@ def test_two_factor_beta_ai_matches_single_factor(simple_returns, ai_log):
     assert two_factor == pytest.approx(single, abs=0.05)
 
 
+def test_indexed_cumulative_returns_basic_compounding():
+    """Values compound off a 100 base via SIMPLE returns, same convention as
+    m2_replay.py's window_series() for raw prices."""
+    dates = pd.date_range("2026-01-01", periods=3, freq="B")
+    user = pd.Series([0.10, -0.10, 0.05], index=dates)
+    ref = pd.Series([0.02, 0.02, 0.02], index=dates)
+    user_indexed, ref_indexed, n_days = fl.indexed_cumulative_returns(user, ref, window=10)
+    assert n_days == 3
+    assert user_indexed.iloc[0] == pytest.approx(110.0)
+    assert user_indexed.iloc[1] == pytest.approx(110.0 * 0.90)
+    assert user_indexed.iloc[2] == pytest.approx(110.0 * 0.90 * 1.05)
+    assert ref_indexed.iloc[-1] == pytest.approx(100 * 1.02 ** 3)
+
+
+def test_indexed_cumulative_returns_respects_window_truncation():
+    """A shorter window than the available history truncates to the trailing N days."""
+    dates = pd.date_range("2026-01-01", periods=5, freq="B")
+    user = pd.Series([0.01] * 5, index=dates)
+    ref = pd.Series([0.01] * 5, index=dates)
+    _, _, n_days = fl.indexed_cumulative_returns(user, ref, window=3)
+    assert n_days == 3
+
+
+def test_indexed_cumulative_returns_reports_actual_days_for_short_history():
+    """A portfolio with fewer overlapping days than the window must report the
+    real count, not silently claim a full window -- this is what lets the app
+    tell a short-history portfolio apart from a full trailing-year one."""
+    dates = pd.date_range("2026-01-01", periods=5, freq="B")
+    user = pd.Series([0.01] * 5, index=dates)
+    ref = pd.Series([0.01] * 5, index=dates)
+    _, _, n_days = fl.indexed_cumulative_returns(user, ref, window=fl.WINDOW)
+    assert n_days == 5
+
+
+def test_indexed_cumulative_returns_aligns_on_overlapping_dates_only():
+    """A reference date the user portfolio has no data for (e.g. before a
+    short-history ticker was listed) must not sneak into the indexed path."""
+    dates_user = pd.to_datetime(["2026-01-05", "2026-01-06", "2026-01-07"])
+    dates_ref = pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07"])
+    user = pd.Series([0.01, 0.02, -0.01], index=dates_user)
+    ref = pd.Series([0.50, 0.03, 0.01, 0.02], index=dates_ref)  # 0.50 on 01-02, before user has data
+    user_indexed, ref_indexed, n_days = fl.indexed_cumulative_returns(user, ref, window=10)
+    assert n_days == 3
+    assert ref_indexed.iloc[0] == pytest.approx(100 * 1.03)
+
+
 def test_project_scenario_formula():
     """The scenario formula is exactly beta_AI x AI_shock + beta_rest x rest_shock."""
     result = fl.project_scenario(beta_ai=0.5, beta_rest=0.3, ai_shock=-0.5, rest_shock=-0.2)

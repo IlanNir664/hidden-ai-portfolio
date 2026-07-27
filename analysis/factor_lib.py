@@ -319,6 +319,29 @@ def rolling_beta(y_log: pd.Series, x_log: pd.Series, window: int = WINDOW) -> pd
     return (cov / var).dropna()
 
 
+def indexed_cumulative_returns(user_simple: pd.Series, reference_simple: pd.Series, window: int = WINDOW):
+    """Cumulative return paths for a portfolio and a reference series, indexed to
+    100 at the trailing window's start -- the same "index to 100" convention
+    m2_replay.py's window_series() applies to raw prices, adapted here since a
+    synthetic weighted portfolio has no price level of its own, only a daily
+    return series (see build_portfolio_simple_returns). Built from compounded
+    SIMPLE returns (not log), matching the M2 crash-replay charts' convention.
+
+    Aligns both series first (pd.concat + dropna, same idiom single_factor_regress
+    and rolling_beta already use above) so a short-history portfolio's window can't
+    silently pull in reference dates it has no data for, then takes the trailing
+    `window` overlapping days. Returns (user_indexed, reference_indexed, n_days):
+    n_days is how many trailing overlapping trading days were actually available,
+    so callers can tell a short-history portfolio apart from a full
+    trailing-window one without re-deriving it.
+    """
+    aligned = pd.concat([user_simple, reference_simple], axis=1, keys=["user", "ref"]).dropna().tail(window)
+    n_days = len(aligned)
+    user_indexed = (1 + aligned["user"]).cumprod() * 100
+    ref_indexed = (1 + aligned["ref"]).cumprod() * 100
+    return user_indexed, ref_indexed, n_days
+
+
 def project_scenario(beta_ai: float, beta_rest: float, ai_shock: float, rest_shock: float) -> float:
     """The scenario projection formula, in exactly one place.
 

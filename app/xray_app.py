@@ -246,6 +246,61 @@ def _apply_base_layout(fig: go.Figure, y_title: str = None, x_title: str = None,
     return fig
 
 
+def render_realized_return_chart(user_indexed: pd.Series, spy_indexed: pd.Series,
+                                  user_return_pct: float, spy_return_pct: float):
+    """Cumulative return path over the trailing window, indexed to 100 at the
+    window's start -- same convention as m2_replay.py's crash-replay charts,
+    built here from compounded SIMPLE returns via factor_lib.indexed_cumulative_returns
+    (a synthetic weighted portfolio has no price level of its own to index directly).
+    User's line in lime with the house gradient glow-fill; SPY as a muted-gray
+    dashed reference line. Both get a direct end-of-line label stating the
+    realized % return, not just the indexed value, so the number in the sentence
+    above the chart is also readable straight off the line.
+
+    v2: the original fill="tozeroy" forced the y-axis to include 0, which
+    squeezed the real ~99-135 index band into a thin strip at the top of the
+    chart (the "can barely see the upside" bug) -- a plotly gotcha where a
+    tozeroy fill's implicit lower bound of 0 counts toward autorange even though
+    no actual data point is anywhere near it. Fixed two ways: the fill now runs
+    "tonexty" against an invisible baseline trace pinned at 100 (the window's
+    start value) instead of down to zero, so it shades gain/loss *from the
+    starting point* rather than from an arbitrary zero; and the y-axis range is
+    set explicitly from the real data's own min/max (with a little padding)
+    instead of autoranging around whatever the fill happens to touch.
+    """
+    all_values = list(user_indexed.values) + list(spy_indexed.values) + [100.0]
+    y_min, y_max = min(all_values), max(all_values)
+    y_pad = (y_max - y_min) * 0.12 or 1.0
+
+    fig = go.Figure()
+    fig.add_scatter(
+        x=spy_indexed.index, y=spy_indexed.values, mode="lines",
+        line=dict(color=MUTED_GRAY_2, width=1.5, dash="dash"),
+        hovertemplate="%{x|%Y-%m-%d}<br>SPY: %{y:.1f}<extra></extra>",
+    )
+    # Invisible baseline at 100 -- exists only so the user's line below can fill
+    # "tonexty" against its own starting point instead of tozeroy's implicit 0.
+    fig.add_scatter(
+        x=user_indexed.index, y=[100.0] * len(user_indexed), mode="lines",
+        line=dict(width=0), hoverinfo="skip", showlegend=False,
+    )
+    fig.add_scatter(
+        x=user_indexed.index, y=user_indexed.values, mode="lines",
+        line=dict(color=LIME, width=2.5), fill="tonexty",
+        fillgradient=dict(type="vertical", colorscale=[[0, "rgba(200,241,53,0.32)"], [1, "rgba(200,241,53,0)"]]),
+        hovertemplate="%{x|%Y-%m-%d}<br>Your portfolio: %{y:.1f}<extra></extra>",
+    )
+    fig.add_annotation(x=user_indexed.index[-1], y=user_indexed.values[-1], text=f"{user_return_pct:+.1f}%",
+                        showarrow=False, xanchor="left", xshift=10, font=dict(color=LIME, size=13))
+    fig.add_annotation(x=spy_indexed.index[-1], y=spy_indexed.values[-1], text=f"SPY {spy_return_pct:+.1f}%",
+                        showarrow=False, xanchor="left", xshift=10, font=dict(color=MUTED_GRAY_2, size=12))
+    fig.add_hline(y=100, line_color="rgba(154,156,147,0.35)", line_width=1)
+    _apply_base_layout(fig, y_title="Cumulative return (indexed to 100)")
+    fig.update_layout(margin=dict(t=36, l=56, r=90, b=48))
+    fig.update_yaxes(range=[y_min - y_pad, y_max + y_pad])
+    return fig
+
+
 def render_comparison_chart(m1_table: pd.DataFrame, user_beta_pct: float, user_direct_pct):
     names = REFERENCE_PORTFOLIOS
     direct = [fl.DIRECT_WEIGHT_PCT[p] for p in names]
@@ -290,7 +345,7 @@ def render_scenario_chart(no_bubble_pct: float, style_2022_pct: float, style_200
     larger-magnitude loss than the last), same convention as m3_scenarios.py's
     chart5. spy_crash_refs, if given, is {"2022": pct, "2008": pct, "dotcom": pct} --
     SPY's own projection under each of the three crash scenarios (not no-bubble),
-    read from the same source Step 5 already uses.
+    read from the same source Step 6 already uses.
     """
     labels = ["No bubble<br>(trend continuation)", "If a 2022-style<br>repricing occurred",
               "If a 2008-style<br>repricing occurred", "If a dot-com-style<br>repricing occurred"]
@@ -312,7 +367,7 @@ def render_scenario_chart(no_bubble_pct: float, style_2022_pct: float, style_200
 
     if spy_crash_refs:
         # "Is my number bad?" reference: where SPY lands in the SAME scenario, read
-        # from the same m3_scenario_table.csv Step 5 already uses -- never
+        # from the same m3_scenario_table.csv Step 6 already uses -- never
         # hardcoded. A single page-wide line no longer makes sense with 4 bars on
         # different scales (no-bubble is a gain), so this is a short horizontal
         # tick centered on each crash-scenario bar specifically, at SPY's value for
@@ -403,7 +458,7 @@ def render_rolling_beta_chart(user_rolling: pd.Series, spy_rolling: pd.Series, u
 def render_hero_sparkline(user_rolling_recent: pd.Series, current_beta_pct: float):
     """Tiny lime-glow sparkline for the top-of-page hero -- last ~2 years of the
     user's rolling AI beta, no axes/gridlines, just the shape and where it ends up.
-    Shares the same rolling-beta series the Step 5 (bonus) chart uses; this function
+    Shares the same rolling-beta series the Step 6 (bonus) chart uses; this function
     only handles a truncated slice and stripped-down layout, no new computation.
     """
     fig = go.Figure()
@@ -943,6 +998,17 @@ with st.spinner("X-raying your portfolio…"):
 
     n_obs = single["n_obs"]
 
+    # Realized last-year return (Step 3 panel) -- SIMPLE-return compounding, indexed
+    # to 100 at the window's start, same convention as m2_replay.py's crash-replay
+    # charts. Aligned against SPY over the SAME trailing dates the user's own
+    # portfolio has data for, so a short-history holding doesn't get compared
+    # against a SPY window it didn't actually overlap with.
+    user_indexed, spy_indexed, realized_n_days = fl.indexed_cumulative_returns(
+        user_simple, simple_returns["SPY"], fl.WINDOW
+    )
+    user_return_pct = user_indexed.iloc[-1] - 100
+    spy_return_pct = spy_indexed.iloc[-1] - 100
+
     beta_pct = single["beta"] * 100
     r_squared = single["r_squared"]
 
@@ -958,7 +1024,7 @@ with st.spinner("X-raying your portfolio…"):
     proj_dotcom = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"]) * 100
 
     # Rolling beta -- computed exactly once here, shared by the hero sparkline (a
-    # recent-2-years slice) below and the Step 5 bonus expander (the full series)
+    # recent-2-years slice) below and the Step 6 bonus expander (the full series)
     # further down. Not wrapped in @st.cache_data since it depends on the user's
     # arbitrary weights dict; it's a cheap vectorized computation either way.
     user_rolling_full = fl.rolling_beta(user_log, ai_log, fl.WINDOW)
@@ -1074,20 +1140,47 @@ with st.container(border=True):
         )
 
 # ============================================================================
-# Panel 2: Comparison chart
+# Panel 2: Realized last-year return -- the upside your measured AI exposure
+# has already produced, shown before Panel 3's cross-portfolio comparison and
+# Panel 4's conditional downside scenarios.
 # ============================================================================
 
-section_header("3", "Where you sit among the standard portfolios")
+section_header("3", "Your portfolio, the last year")
+with st.container(border=True):
+    if realized_n_days < fl.WINDOW:
+        st.markdown(
+            f"Over the last **{realized_n_days} trading days** (your portfolio's available "
+            f"history), it would have returned **{user_return_pct:+.1f}%**, versus "
+            f"**{spy_return_pct:+.1f}%** for SPY over the same days."
+        )
+    else:
+        st.markdown(
+            f"Over the last year, your portfolio would have returned "
+            f"**{user_return_pct:+.1f}%**, versus **{spy_return_pct:+.1f}%** for SPY."
+        )
+    fig_realized = render_realized_return_chart(user_indexed, spy_indexed, user_return_pct, spy_return_pct)
+    st.plotly_chart(fig_realized, theme=None, width="stretch", config=PLOTLY_CONFIG)
+    st.caption(
+        "Realized performance, fixed-weight daily-rebalanced assumption -- not what you "
+        "would have earned with your actual trade timing. This is the upside your "
+        "measured AI exposure has already produced; Step 5 shows the conditional downside."
+    )
+
+# ============================================================================
+# Panel 3: Comparison chart
+# ============================================================================
+
+section_header("4", "Where you sit among the standard portfolios")
 with st.container(border=True):
     fig2 = render_comparison_chart(m1_table, beta_pct, user_direct_pct)
     st.plotly_chart(fig2, theme=None, width="stretch", config=PLOTLY_CONFIG)
     st.caption("AI basket: NVDA, MSFT, GOOGL, META, AMZN, AAPL, AVGO, TSM (equal-weighted). Your bar in lime.")
 
 # ============================================================================
-# Panel 3: Scenario bars
+# Panel 4: Scenario bars
 # ============================================================================
 
-section_header("4", "If a repricing happened")
+section_header("5", "If a repricing happened")
 with st.container(border=True):
     m3_table = get_m3_table()
     is_pure_spy = set(weights.keys()) == {"SPY"}
@@ -1105,10 +1198,10 @@ with st.container(border=True):
     )
 
 # ============================================================================
-# Panel 4: The menu (tradeoff scatter)
+# Panel 5: The menu (tradeoff scatter)
 # ============================================================================
 
-section_header("5", "The menu: upside kept vs. downside risked")
+section_header("6", "The menu: upside kept vs. downside risked")
 with st.container(border=True):
     m3_reference = {
         p: (m3_table.loc[p, "proj_dotcom_style_pct"], m3_table.loc[p, "proj_no_bubble_pct"])
