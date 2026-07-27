@@ -242,6 +242,13 @@ Written alongside the analysis, not after it. Full list in [`LIMITATIONS.md`](LI
 
 ---
 
+## License
+
+All rights reserved — see [`LICENSE`](LICENSE). Shared publicly for portfolio and
+demonstration purposes only; not licensed for reuse or redistribution.
+
+---
+
 *Educational research project — **not investment advice**. Nothing here recommends any
 portfolio, weight, or action.*
 

@@ -833,6 +833,15 @@ st.markdown(f"""
         transition: background 0.35s ease, box-shadow 0.35s ease;
     }}
     .progress-dot.is-unlocked {{ background: {LIME}; box-shadow: 0 0 6px rgba(200,241,53,0.55); }}
+
+    /* Persistent footer watermark -- deliberately quiet: small, muted, centered,
+       plenty of top margin so it reads as a signature line, not another panel.
+       Plain text (no <a>) so it doesn't pick up the site-wide lime link color
+       and start competing visually with the real content above it. */
+    .app-footer {{
+        text-align: center; color: {TEXT_MUTED}; font-size: 0.72rem;
+        opacity: 0.75; margin: 56px 0 8px 0;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1583,6 +1592,14 @@ st.caption(
     f"Demo universe: {len(universe)} tickers cached in data/prices.db. Fixed-weight, daily-rebalanced "
     "portfolio assumption -- ignores real-world drift and trading costs. See LIMITATIONS.md (Module 4) "
     "and outputs/m4_methodology.md for full detail. Every Module 1 and Module 3 limitation applies here too."
+)
+
+# Persistent footer watermark -- see the .app-footer rule in the page's <style>
+# block for why it's plain text (no link) and deliberately quiet.
+st.markdown(
+    '<div class="app-footer">Built by Ilan Niraev -- '
+    'https://github.com/IlanNir664/hidden-ai-portfolio -- 2026</div>',
+    unsafe_allow_html=True,
 )
 
 # ============================================================================
