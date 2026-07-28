@@ -120,13 +120,13 @@ DEFAULT_PORTFOLIO = {
 PRESETS = {
     "Modern DIY mix (default)": dict(DEFAULT_PORTFOLIO),
     "60/40 (SPY/TLT)": {"SPY": 60.0, "TLT": 40.0},
-    "100% QQQ -- max AI exposure": {"QQQ": 100.0},
-    "100% NVDA -- direct AI holding": {"NVDA": 100.0},
+    "100% QQQ (max AI exposure)": {"QQQ": 100.0},
+    "100% NVDA (direct AI holding)": {"NVDA": 100.0},
     "Low-AI mix (utilities/staples/REITs/dividend)": {"XLU": 25.0, "XLP": 25.0, "VNQ": 25.0, "SCHD": 25.0},
-    "100% RSP -- equal-weight S&P": {"RSP": 100.0},
+    "100% RSP (equal-weight S&P)": {"RSP": 100.0},
     "All-weather-ish (SPY/TLT/GLD/VNQ)": {"SPY": 40.0, "TLT": 30.0, "GLD": 15.0, "VNQ": 15.0},
-    "100% TSLA -- single growth stock": {"TSLA": 100.0},
-    "Crypto-adjacent (COIN/SPY) -- shorter-history demo": {"COIN": 60.0, "SPY": 40.0},
+    "100% TSLA (single growth stock)": {"TSLA": 100.0},
+    "Crypto-adjacent (COIN/SPY, shorter-history demo)": {"COIN": 60.0, "SPY": 40.0},
 }
 
 
@@ -226,7 +226,7 @@ def validate_weights(weight_map: dict):
 
     total = sum(weight_map.values())
     if abs(total - 100.0) > 0.01:
-        errors.append(f"Weights sum to {total:.2f}%, not 100%.")
+        errors.append(f"Your weights add up to {total:.2f}%, not 100%.")
         return None, errors, warnings
 
     return {t: w / 100.0 for t, w in weight_map.items()}, errors, warnings
@@ -613,12 +613,12 @@ def comparative_anchor_line(user_beta_pct: float, ref_betas_pct: dict, tie_tol: 
     if below and above:
         below_name = max(below, key=below.get)
         above_name = min(above, key=above.get)
-        return f"more AI than a {below_name} ({below[below_name]:.0f}%), less than {above_name} ({above[above_name]:.0f}%)"
+        return f"more AI than a {below_name} ({below[below_name]:.0f}%) but less than {above_name} ({above[above_name]:.0f}%)"
     if not below:
         lowest_name = min(ref_betas_pct, key=ref_betas_pct.get)
-        return f"less AI than every standard portfolio tested (lowest: {lowest_name}, {ref_betas_pct[lowest_name]:.0f}%)"
+        return f"less AI than every standard portfolio tested here (the lowest, {lowest_name}, sits at {ref_betas_pct[lowest_name]:.0f}%)"
     highest_name = max(ref_betas_pct, key=ref_betas_pct.get)
-    return f"more AI than even {highest_name}, {ref_betas_pct[highest_name]:.0f}%"
+    return f"more AI than even {highest_name}, which sits at {ref_betas_pct[highest_name]:.0f}%"
 
 
 # ============================================================================
@@ -867,9 +867,9 @@ st.markdown('<div class="app-subtitle">How much AI is secretly in your portfolio
 # Wording unchanged from v1 -- only the container/styling changed (a compact
 # bordered note instead of a full-width st.caption paragraph).
 st.markdown(
-    '<div class="disclaimer-note">Every projected number on this page is conditional -- '
-    '"if a 2000-style repricing occurred..." -- not a prediction. This app does not claim '
-    'a bubble exists or that a crash will happen.</div>',
+    '<div class="disclaimer-note">Every projected number here is conditional: if a '
+    '2000-style repricing occurred, this is what it would imply, not what will happen. '
+    'This app isn\'t claiming a bubble exists or that a crash is coming.</div>',
     unsafe_allow_html=True,
 )
 
@@ -878,7 +878,7 @@ prices = load_prices_cached()
 try:
     gate_drawdown = fl.gate_check(prices)
 except AssertionError as e:
-    st.error(f"GATE CHECK FAILED -- refusing to render results.\n\n{e}")
+    st.error(f"Gate check failed, so nothing below will render.\n\n{e}")
     st.stop()
 
 universe = fl.available_tickers(prices)
@@ -1042,10 +1042,10 @@ section_header("0", "Why this exists")
 with st.container(border=True):
     st.markdown(
         "Passive investors buy \"diversified\" funds expecting broad, stable exposure. "
-        "But an index's composition drifts as its constituent weights change over time -- "
-        "and most holders never see that drift, because a fund's stated strategy and name "
-        "stay the same even as what it actually holds, and what actually drives its returns, "
-        "shifts underneath it."
+        "But an index's composition drifts as its constituent weights shift over time, and "
+        "most holders never notice. The fund's name and stated strategy stay exactly the "
+        "same, even while what it actually holds, and what actually drives its returns, "
+        "quietly changes underneath it."
     )
 
     # Reuses Module 1's own sourced concentration history (RBC Wealth
@@ -1063,15 +1063,14 @@ with st.container(border=True):
     hist_current_pct = history_df["pct"].iloc[-1]
     st.caption(
         f"The S&P 500 has been marketed as \"a broad, diversified market index\" since "
-        f"{hist_start_year} -- its name and stated strategy have never changed. But the share of "
-        f"the index concentrated in its top 10 holdings has: {hist_early_pct:.0f}% for a "
-        f"quarter-century ({hist_start_year}-{hist_early_end_year}), now {hist_current_pct:.0f}% "
-        f"today -- nearly double the level that preceded the 2000 dot-com crash. This is "
-        f"composition drift, happening in plain sight, inside the single most widely held index "
-        f"in the world."
+        f"{hist_start_year}, and its name and stated strategy haven't changed since. What has "
+        f"changed is how much of the index sits in its top 10 holdings: {hist_early_pct:.0f}% "
+        f"for a quarter-century ({hist_start_year}-{hist_early_end_year}), {hist_current_pct:.0f}% "
+        f"today, nearly double the level right before the 2000 dot-com crash. That's composition "
+        f"drift happening in plain sight, inside the most widely held index in the world."
     )
 
-    st.markdown("**This app measures the same thing for any portfolio you build below.**")
+    st.markdown("**This app measures the same drift for any portfolio you build below.**")
 
     if 1 not in st.session_state["unlocked_steps"]:
         st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
@@ -1116,7 +1115,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**Supported universe**")
-    st.caption(f"{len(universe)} tickers cached in data/prices.db -- no live ticker lookup at runtime.")
+    st.caption(f"{len(universe)} tickers cached in data/prices.db; nothing is fetched live at runtime.")
     with st.expander("Browse by category"):
         for cat, tickers in categories.items():
             present = [t for t in tickers if t in universe]
@@ -1150,7 +1149,7 @@ with st.container(border=True, key="step1_box"):
     # so it can still write to st.session_state["selected_tickers"] this same rerun --
     # Streamlit forbids mutating a widget's session_state key after that widget has
     # already been created in the same script run.
-    with st.expander("Manual entry (comma-separated tickers) -- fallback"):
+    with st.expander("Manual entry (comma-separated tickers)"):
         manual_text = st.text_input("e.g. SPY, TLT, NVDA", key="manual_ticker_input", label_visibility="collapsed",
                                      placeholder="e.g. SPY, TLT, NVDA")
         if st.button("Add to portfolio", key="manual_add_btn"):
@@ -1166,7 +1165,7 @@ with st.container(border=True, key="step1_box"):
     selected = st.multiselect(
         "Search & select tickers (grouped by category)",
         options=sorted_universe,
-        format_func=lambda t: f"{t} — {category_of[t]}",
+        format_func=lambda t: f"{t} ({category_of[t]})",
         key="selected_tickers",
     )
 
@@ -1228,8 +1227,8 @@ with st.container(border=True, key="step1_box"):
         weights_pct_map = {row["ticker"]: float(row["weight_pct"]) for _, row in edited.iterrows()}
         st.session_state["weight_map"] = dict(weights_pct_map)
         st.caption(
-            "Edit a weight and press Enter (or click away) to apply it. Adding a ticker starts it "
-            "at 0% -- edit its weight, or use Normalize below once your mix sums to 100%."
+            "Edit a weight and press Enter (or click away) to apply it. New tickers start at 0%, "
+            "so update the weight yourself, or hit Normalize below once your mix adds up to 100%."
         )
 
     weights, errors, warnings_ = validate_weights(weights_pct_map)
@@ -1299,8 +1298,8 @@ with st.spinner("X-raying your portfolio…"):
     overlap = fl.overlapping_obs_count(user_log, ai_log)
     if overlap < fl.MIN_REGRESSION_OBS:
         st.error(
-            f"Only {overlap} overlapping trading day(s) between these tickers and the AI basket -- "
-            f"not enough to compute a beta. Try a different mix."
+            f"Only {overlap} overlapping trading day(s) between these tickers and the AI basket. "
+            f"That's not enough to compute a beta, so try a different mix."
         )
         st.stop()
 
@@ -1371,9 +1370,9 @@ else:
         donut_fig = render_portfolio_donut(weights, beta_pct)
         st.plotly_chart(donut_fig, theme=None, width="stretch", config=PLOTLY_CONFIG)
         st.caption(
-            "Segment size = weight in your portfolio. Lime = AI basket member, gray = "
-            "bond/Treasury/commodity fund (no equity exposure), sage = other equity -- "
-            "shades vary within each group so neighboring segments stay distinct."
+            "Segment size is your portfolio weight. Lime marks an AI basket member, gray is a "
+            "bond/Treasury/commodity fund with no equity exposure, and sage is other equity. "
+            "Shades vary within each group so neighboring segments don't blend together."
         )
 
     section_header("2", "Your headline number")
@@ -1400,9 +1399,10 @@ else:
         ref_betas_pct = {p: m1_table.loc[p, "beta"] * 100 for p in REFERENCE_PORTFOLIOS}
         nearest_name = nearest_reference_portfolio(beta_pct, ref_betas_pct)
         verdict_html = (
-            f"Your portfolio behaves like it's {beta_pct:.0f}% AI — closest to <strong>{nearest_name}</strong>. "
-            f"If a dot-com-style repricing occurred, that would imply <strong>{proj_dotcom:+.0f}%</strong>; "
-            f"if the trend simply continued, <strong>{proj_no_bubble:+.0f}%</strong>."
+            f"Your portfolio behaves like it's {beta_pct:.0f}% AI, closest to {nearest_name}. "
+            f"If a dot-com-style repricing occurred, that would put you around "
+            f"<strong>{proj_dotcom:+.0f}%</strong>. If the current trend just kept going, "
+            f"more like <strong>{proj_no_bubble:+.0f}%</strong>."
         )
         st.markdown(f'<div class="verdict-text">{verdict_html}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="comparative-line">{comparative_anchor_line(beta_pct, ref_betas_pct)}</div>',
@@ -1410,40 +1410,41 @@ else:
 
         if user_direct_pct is None:
             st.caption(
-                f"Naive direct weight isn't computable for this mix -- {format_ticker_list(unresolvable)} "
+                f"Naive direct weight isn't computable for this mix: {format_ticker_list(unresolvable)} "
                 f"{'has' if len(unresolvable) == 1 else 'have'} no known top-10 holdings weight."
             )
 
         st.caption(
-            f"R² of {r_squared:.2f} means the AI basket explains **{r_squared * 100:.0f}%** of your portfolio's "
-            f"daily movement -- the remaining **{(1 - r_squared) * 100:.0f}%** is specific to your own holdings, "
-            "not captured by this basket."
+            f"An R² of {r_squared:.2f} means the AI basket explains **{r_squared * 100:.0f}%** of your "
+            f"portfolio's daily movement. The other **{(1 - r_squared) * 100:.0f}%** comes from your own "
+            "holdings and isn't captured by this basket."
         )
         if r_squared < 0.3:
             st.caption(
-                "Because R² is low here, the exposure % above describes a real but partial relationship -- "
-                "most of this portfolio's day-to-day movement isn't AI-basket-driven at all. This is common for "
-                "single-stock or narrow portfolios: beta measures the relationship's *slope*, R² measures how much "
-                "of the movement that relationship actually accounts for."
+                "R² is low here, which means the exposure % above is a real but partial relationship: "
+                "most of this portfolio's day-to-day movement isn't AI-basket-driven at all. That's common "
+                "for single-stock or narrow portfolios. Beta measures the *slope* of the relationship; "
+                "R² measures how much of the movement it actually accounts for."
             )
 
         if beta_pct > 100:
             st.warning(
-                "Your effective exposure is over 100% -- your portfolio moves even more than the AI basket "
-                "itself. This happens when your holdings ARE basket members (more concentrated than the "
-                "equal-weighted basket) or otherwise amplify its moves. The 'direct weight %' reading assumes "
-                "the non-basket remainder is uncorrelated with AI, which breaks down here -- see LIMITATIONS.md, Module 4."
+                "Your effective exposure is over 100%, meaning your portfolio moves even more than the AI "
+                "basket itself. That happens when your holdings are basket members at a higher concentration "
+                "than the equal-weighted basket, or otherwise amplify its moves. The 'direct weight %' reading "
+                "assumes the non-basket remainder is uncorrelated with AI, and that assumption breaks down "
+                "here. See LIMITATIONS.md, Module 4."
             )
         elif beta_pct <= 3:
             st.info(
                 "A reading at or near zero (including slightly negative) just means near-zero correlation "
-                "with the AI basket over the trailing year -- not a deliberate hedge against it."
+                "with the AI basket over the trailing year. It's not a deliberate hedge against it."
             )
 
         if n_obs < fl.WINDOW:
             st.warning(
-                f"Only {n_obs} overlapping trading days available for this portfolio (fewer than the "
-                f"standard {fl.WINDOW}-day window) -- estimates above are less reliable than for a "
+                f"Only {n_obs} overlapping trading days available for this portfolio, fewer than the "
+                f"standard {fl.WINDOW}-day window, so the estimates above are less reliable than for a "
                 f"portfolio with full history."
             )
 
@@ -1471,9 +1472,9 @@ if 4 in st.session_state["unlocked_steps"]:
     with st.container(border=True, key="step3_box"):
         if realized_n_days < fl.WINDOW:
             st.markdown(
-                f"Over the last **{realized_n_days} trading days** (your portfolio's available "
-                f"history), it would have returned **{user_return_pct:+.1f}%**, versus "
-                f"**{spy_return_pct:+.1f}%** for SPY over the same days."
+                f"Over the last {realized_n_days} trading days, which is all the history this "
+                f"portfolio has, it would have returned **{user_return_pct:+.1f}%**, versus "
+                f"**{spy_return_pct:+.1f}%** for SPY over the same stretch."
             )
         else:
             st.markdown(
@@ -1483,9 +1484,9 @@ if 4 in st.session_state["unlocked_steps"]:
         fig_realized = render_realized_return_chart(user_indexed, spy_indexed, user_return_pct, spy_return_pct)
         st.plotly_chart(fig_realized, theme=None, width="stretch", config=PLOTLY_CONFIG)
         st.caption(
-            "Realized performance, fixed-weight daily-rebalanced assumption -- not what you "
-            "would have earned with your actual trade timing. This is the upside your "
-            "measured AI exposure has already produced; Step 5 shows the conditional downside."
+            "This is realized performance under a fixed-weight, daily-rebalanced assumption, not "
+            "what you'd actually have earned with your own trade timing. It's the upside your "
+            "measured AI exposure has already produced. Step 5 covers the conditional downside."
         )
 
 # ============================================================================
@@ -1504,7 +1505,7 @@ if 4 in st.session_state["unlocked_steps"]:
     with st.container(border=True, key="step4_box"):
         fig2 = render_comparison_chart(m1_table, beta_pct, user_direct_pct)
         st.plotly_chart(fig2, theme=None, width="stretch", config=PLOTLY_CONFIG)
-        st.caption("AI basket: NVDA, MSFT, GOOGL, META, AMZN, AAPL, AVGO, TSM (equal-weighted). Your bar in lime.")
+        st.caption("AI basket: NVDA, MSFT, GOOGL, META, AMZN, AAPL, AVGO, TSM, equal-weighted. Your bar is the lime one.")
 
 # ============================================================================
 # Panel 4: Scenario bars, and Panel 5: the tradeoff scatter -- both gated
@@ -1548,8 +1549,8 @@ if 4 in st.session_state["unlocked_steps"]:
             fig3 = render_scenario_chart(proj_no_bubble, proj_2022, proj_2008, proj_dotcom, spy_crash_refs)
             st.plotly_chart(fig3, theme=None, width="stretch", config=PLOTLY_CONFIG)
             st.caption(
-                "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock. No alpha/drift term. "
-                "Projection, not a forecast. See LIMITATIONS.md."
+                "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "
+                "drift term. A projection, not a forecast. See LIMITATIONS.md."
             )
 
         step_anchor(6)
@@ -1565,8 +1566,8 @@ if 4 in st.session_state["unlocked_steps"]:
             st.plotly_chart(fig4, theme=None, width="stretch", config=PLOTLY_CONFIG)
 
             st.markdown(
-                "*This app does not recommend a weight -- it shows the tradeoff your portfolio implies, "
-                "same stance as the rest of this project.*"
+                "*This app doesn't recommend a weight. It just shows the tradeoff your portfolio "
+                "implies, same stance as the rest of this project.*"
             )
 
 # ============================================================================
@@ -1589,16 +1590,17 @@ with st.expander("Bonus: When did your portfolio become an AI fund? (rolling bet
 
 st.markdown("---")
 st.caption(
-    f"Demo universe: {len(universe)} tickers cached in data/prices.db. Fixed-weight, daily-rebalanced "
-    "portfolio assumption -- ignores real-world drift and trading costs. See LIMITATIONS.md (Module 4) "
-    "and outputs/m4_methodology.md for full detail. Every Module 1 and Module 3 limitation applies here too."
+    f"Demo universe: {len(universe)} tickers cached in data/prices.db. This assumes a fixed-weight, "
+    "daily-rebalanced portfolio, so it ignores real-world drift and trading costs. See LIMITATIONS.md "
+    "(Module 4) and outputs/m4_methodology.md for the full detail. Every Module 1 and Module 3 "
+    "limitation applies here too."
 )
 
 # Persistent footer watermark -- see the .app-footer rule in the page's <style>
 # block for why it's plain text (no link) and deliberately quiet.
 st.markdown(
-    '<div class="app-footer">Built by Ilan Niraev -- '
-    'https://github.com/IlanNir664/hidden-ai-portfolio -- 2026</div>',
+    '<div class="app-footer">Built by Ilan Niraev, 2026 '
+    '(https://github.com/IlanNir664/hidden-ai-portfolio)</div>',
     unsafe_allow_html=True,
 )
 
