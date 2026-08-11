@@ -287,5 +287,5 @@ demonstration purposes only; not licensed for reuse or redistribution.
 *Educational research project — **not investment advice**. Nothing here recommends any
 portfolio, weight, or action.*
 
-**Built by [YOUR NAME]** · [LinkedIn](https://linkedin.com/in/YOUR-PROFILE) ·
+**Built by [Ilan Niraev]** · [LinkedIn](www.linkedin.com/in/ilan-niraev-054a233b4) ·
 [GitHub](https://github.com/IlanNir664)
