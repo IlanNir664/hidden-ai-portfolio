@@ -8,10 +8,14 @@ alongside the analysis, not after -- per the project's rigor rule (see
 
 - **Hindsight-selected basket.** The AI basket (NVDA, MSFT, GOOGL, META, AMZN, AAPL,
   AVGO, TSM) is a single, currently-obvious set of large AI/mega-cap names chosen with
-  the benefit of hindsight. No alternative basket definition (e.g. cap-weighted, or a
-  basket as it would have looked in 2015) has been tested against it in Tier 1 --
-  headline findings have not yet been checked for survival under a different basket.
-  Planned for Tier 2 (basket sensitivity, T2.2).
+  the benefit of hindsight. No alternative basket definition (e.g. a basket as it would
+  have looked in 2015) has been tested against it in Tier 1 -- headline findings have
+  not yet been checked for survival under a different basket. Planned for Tier 2
+  (basket sensitivity, T2.2). Partial exception: the X-ray app's "Why these 8 tickers?"
+  expander (Module 4) does compute a live cap-weighted alternative, using a rough
+  market-cap snapshot (`factor_lib.AI_BASKET_CAP_WEIGHT_PCT`), but only as a
+  self-contained sensitivity check on the user's own portfolio, not as a re-run of
+  Module 1/3's published findings -- those remain equal-weighted-only.
 - **Linear beta understates crash correlations.** Effective exposure is measured via
   OLS beta, a linear, symmetric measure. It does not distinguish upside from downside
   co-movement, and cross-asset correlations are well documented to rise specifically

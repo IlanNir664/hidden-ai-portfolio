@@ -100,12 +100,18 @@ DONUT_GROUP_LABELS = {
 }
 DONUT_LABEL_MIN_PCT = 5.0  # segments below this weight get no outside label, hover only
 
-# Default portfolio shown on first visit -- a diversified DIY-style mix (broad
-# market core + a couple of single-stock/sector tilts), not the research
-# project's 60/40 reference portfolio. Defined ONCE here; the multiselect
-# default, the weight-editor's starting values, and the "Modern DIY mix" preset
-# below all read from this single dict so they can never drift out of sync.
-# Dict order matters -- it's the order tickers appear as multiselect tags and
+# Default portfolio shown on first visit -- NOT the research project's textbook
+# 60/40 reference portfolio, and not "what everyone holds" either. It's a
+# broad-market core (VOO) with a Nasdaq-growth tilt (QQQM) and a couple of
+# single-stock adds (NVDA, AAPL, MU) layered on top -- the kind of mix a
+# reasonable, still-mostly-passive self-directed investor can end up with one
+# ticker at a time, each addition individually defensible, without necessarily
+# noticing how far the composition has drifted from the two/three-fund
+# textbook version. See the caption at the top of Step 1 for the copy that
+# says this explicitly to the user. Defined ONCE here; the multiselect
+# default, the weight-editor's starting values, and the matching preset below
+# all read from this single dict so they can never drift out of sync. Dict
+# order matters -- it's the order tickers appear as multiselect tags and
 # weight-editor rows on first load. Values are percent (0-100), summing to 100.
 DEFAULT_PORTFOLIO = {
     "NVDA": 5.0,
@@ -118,7 +124,7 @@ DEFAULT_PORTFOLIO = {
 }
 
 PRESETS = {
-    "Modern DIY mix (default)": dict(DEFAULT_PORTFOLIO),
+    "A common self-directed mix (default)": dict(DEFAULT_PORTFOLIO),
     "60/40 (SPY/TLT)": {"SPY": 60.0, "TLT": 40.0},
     "100% QQQ (max AI exposure)": {"QQQ": 100.0},
     "100% NVDA (direct AI holding)": {"NVDA": 100.0},
@@ -149,6 +155,18 @@ def get_simple_returns(prices: pd.DataFrame) -> pd.DataFrame:
 def get_ai_log(prices: pd.DataFrame) -> pd.Series:
     simple_returns = get_simple_returns(prices)
     return fl.to_log_returns(fl.ai_basket_simple_returns(simple_returns))
+
+
+@st.cache_data
+def get_ai_log_capweighted(prices: pd.DataFrame) -> pd.Series:
+    """Cap-weighted alternative to get_ai_log, for the "Why these 8 tickers?"
+    sensitivity check only -- see fl.AI_BASKET_CAP_WEIGHT_PCT. Not used anywhere
+    else in the app; the headline number, comparison chart, and scenario
+    projections all stay on the equal-weighted basket so they remain comparable
+    to the reference portfolios' precomputed (equal-weighted) figures.
+    """
+    simple_returns = get_simple_returns(prices)
+    return fl.to_log_returns(fl.ai_basket_capweighted_simple_returns(simple_returns))
 
 
 @st.cache_data
@@ -864,11 +882,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown('<div class="app-subtitle">How much AI is secretly in your portfolio?</div>', unsafe_allow_html=True)
-# Wording unchanged from v1 -- only the container/styling changed (a compact
-# bordered note instead of a full-width st.caption paragraph).
+# v3: added a short "why 2000" clause -- the disclaimer's headline reference scenario
+# used to go unexplained here (see Step 5's own caption for the fuller version: 2000
+# is the closest concentration-crash analogy on record; 2008 and 2022 are shown too,
+# as weaker structural matches, not omitted).
 st.markdown(
     '<div class="disclaimer-note">Every projected number here is conditional: if a '
-    '2000-style repricing occurred, this is what it would imply, not what will happen. '
+    '2000-style repricing occurred (the closest concentration-crash analogy on record, '
+    'see Step 5 for 2008 and 2022 too), this is what it would imply, not what will happen. '
     'This app isn\'t claiming a bubble exists or that a crash is coming.</div>',
     unsafe_allow_html=True,
 )
@@ -1115,7 +1136,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**Supported universe**")
-    st.caption(f"{len(universe)} tickers cached in data/prices.db; nothing is fetched live at runtime.")
+    st.caption(f"{len(universe)} tickers, all cached locally. See Step 1 for what that covers.")
     with st.expander("Browse by category"):
         for cat, tickers in categories.items():
             present = [t for t in tickers if t in universe]
@@ -1131,6 +1152,18 @@ if 1 not in st.session_state["unlocked_steps"]:
 
 step_anchor(1)
 section_header("1", "Build your portfolio")
+
+st.caption(
+    f"Covers {len(universe)} tickers across major US index funds, sector ETFs, and mega-cap "
+    "stocks, all cached locally ahead of time. Nothing is fetched live, so search below to "
+    "see if yours is included; if it isn't, this tool can't measure it yet."
+)
+st.caption(
+    "Pre-loaded below is a broad-market core plus a Nasdaq-growth fund and a couple of "
+    "single-stock adds. It's a common self-directed mix, not the textbook two/three-fund "
+    "passive portfolio, shown here as an example of how a reasonable, still-mostly-passive "
+    "portfolio can drift toward AI exposure a ticker at a time. Change it to anything below."
+)
 
 if "selected_tickers" not in st.session_state:
     st.session_state["selected_tickers"] = list(DEFAULT_PORTFOLIO.keys())
@@ -1306,6 +1339,12 @@ with st.spinner("X-raying your portfolio…"):
     single = fl.single_factor_regress(user_log, ai_log)
     two_factor = fl.two_factor_regress(user_log, ai_log, rest_factor_252)
 
+    # Cap-weighted sensitivity check for the "Why these 8 tickers?" expander only
+    # -- see get_ai_log_capweighted's own comment for why this doesn't touch the
+    # headline number or anything downstream of it.
+    ai_log_capweighted = get_ai_log_capweighted(prices)
+    beta_pct_capweighted = fl.single_factor_regress(user_log, ai_log_capweighted)["beta"] * 100
+
     n_obs = single["n_obs"]
 
     # Realized last-year return (Step 3 panel) -- SIMPLE-return compounding, indexed
@@ -1448,6 +1487,39 @@ else:
                 f"portfolio with full history."
             )
 
+        with st.expander("Why these 8 tickers?"):
+            st.markdown(
+                "NVDA, MSFT, GOOGL, META, AMZN, AAPL, AVGO, and TSM: the largest, most "
+                "obviously AI-exposed mega-cap names, picked with the benefit of hindsight. "
+                "There's no revenue-exposure threshold or index-membership rule behind the "
+                "list; it's the project's own judgment call about which companies today's "
+                "\"AI trade\" actually runs through. A different, equally defensible basket "
+                "(narrower, broader, picked as of 2015 instead of today) would likely produce "
+                "a different number. See LIMITATIONS.md for the full caveat."
+            )
+            st.markdown(
+                "The basket is also **equal-weighted**: each of the 8 counts the same "
+                "regardless of size, so NVDA and META pull equally even though NVDA's market "
+                "cap is roughly triple META's. A cap-weighted basket would let the biggest "
+                "names dominate instead, closer to how a real index behaves."
+            )
+            beta_pct_delta = beta_pct_capweighted - beta_pct
+            st.markdown(
+                f"That choice matters for your own number too. Equal-weighted, your "
+                f"portfolio reads as **{beta_pct:.0f}% AI**. Cap-weighted, using a rough "
+                f"market-cap snapshot for the 8 tickers, it reads as "
+                f"**{beta_pct_capweighted:.0f}% AI** ({beta_pct_delta:+.0f} points). Same "
+                f"holdings, same math, a different weighting assumption inside the reference "
+                f"basket, and the answer moves."
+            )
+            st.caption(
+                "The headline number above, the comparison chart, and the repricing "
+                "simulation all use the equal-weighted basket throughout, so they stay "
+                "consistent with each other and with this project's published research. "
+                "This cap-weighted figure is a live sensitivity check only, computed the same "
+                "way as the headline number against a differently-weighted basket."
+            )
+
 # ============================================================================
 # Panel 2: Realized last-year return -- the upside your measured AI exposure
 # has already produced, shown before Panel 3's cross-portfolio comparison and
@@ -1552,6 +1624,17 @@ if 4 in st.session_state["unlocked_steps"]:
                 "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "
                 "drift term. A projection, not a forecast. See LIMITATIONS.md."
             )
+            st.caption(
+                "This app uses three historical analogies: 2022 (a smaller, rate-driven "
+                "growth-stock repricing), 2008 (a systemic crash where the \"rest of market\" "
+                "fell about as hard as the epicenter, the weakest analogy of the three since "
+                "tech wasn't what 2008 was about), and dot-com 2000. Dot-com gets the emphasis "
+                "elsewhere in this app (the disclaimer above, Step 6's chart) because it's the "
+                "one true **concentration** crash on record, with the market's top holdings "
+                "cracking under their own weight the same way Step 0's chart shows happening "
+                "again today. 2022 and 2008 are real data points here too, just weaker "
+                "structural matches to what this app measures."
+            )
 
         step_anchor(6)
         section_header("6", "The menu: upside kept vs. downside risked")
@@ -1565,6 +1648,12 @@ if 4 in st.session_state["unlocked_steps"]:
             fig4 = render_tradeoff_chart(m3_reference, proj_dotcom, proj_no_bubble)
             st.plotly_chart(fig4, theme=None, width="stretch", config=PLOTLY_CONFIG)
 
+            st.caption(
+                "This chart plots the dot-com scenario rather than 2022 or 2008, because it's "
+                "the closest structural match to a concentration crash (see Step 5's caption). "
+                "The other two scenarios' numbers are still in the table above, just not drawn "
+                "as a second axis here."
+            )
             st.markdown(
                 "*This app doesn't recommend a weight. It just shows the tradeoff your portfolio "
                 "implies, same stance as the rest of this project.*"

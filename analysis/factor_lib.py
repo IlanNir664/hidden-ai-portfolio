@@ -55,6 +55,25 @@ ZERO_DIRECT_WEIGHT_TICKERS = {
     "GLD", "IAU", "SLV", "DBC",  # physical commodities / futures
 }
 
+# Cap-weighted alternative to the basket's default equal-weighting -- a rough,
+# point-in-time market-cap snapshot (aggregated market data, ~2026-08-22),
+# same "hardcoded and sourced" convention as DIRECT_WEIGHT_PCT above. Used only
+# for the app's "Why these 8 tickers?" sensitivity check (does the headline
+# number move much under a different weighting), not by any research module --
+# m1/m3's published figures are equal-weighted only, per AI_BASKET's docstring
+# elsewhere. This is a snapshot, not a live market-cap feed; it will drift out
+# of date the same way DIRECT_WEIGHT_PCT does.
+AI_BASKET_CAP_WEIGHT_PCT = {
+    "NVDA": 20.68,
+    "AAPL": 16.79,
+    "GOOGL": 15.99,
+    "MSFT": 13.94,
+    "AMZN": 10.97,
+    "TSM": 8.49,
+    "AVGO": 7.54,
+    "META": 5.60,
+}
+
 
 def compute_direct_weight_pct(weights: dict):
     """Naive/direct AI-basket weight for an arbitrary user portfolio, in percent.
@@ -165,6 +184,16 @@ def to_log_returns(simple_returns: pd.Series) -> pd.Series:
 def ai_basket_simple_returns(simple_returns: pd.DataFrame, basket: list = AI_BASKET) -> pd.Series:
     """Equal-weight mean of the basket's simple returns, only on days all members exist."""
     return simple_returns[basket].dropna().mean(axis=1)
+
+
+def ai_basket_capweighted_simple_returns(simple_returns: pd.DataFrame) -> pd.Series:
+    """Cap-weighted version of the same basket, using AI_BASKET_CAP_WEIGHT_PCT.
+
+    Only for the app's basket-weighting sensitivity check -- see that dict's own
+    comment. Same restricted-to-overlapping-days rule as ai_basket_simple_returns.
+    """
+    weights = {t: w / 100.0 for t, w in AI_BASKET_CAP_WEIGHT_PCT.items()}
+    return build_portfolio_simple_returns(simple_returns, weights)
 
 
 def build_portfolio_simple_returns(simple_returns: pd.DataFrame, weights: dict) -> pd.Series:
