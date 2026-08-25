@@ -812,14 +812,16 @@ st.markdown(f"""
         background-image:
             radial-gradient(ellipse 70% 65% at 50% 50%, transparent 55%, rgba(0,0,0,{BG_VIGNETTE_OPACITY}) 100%),
             radial-gradient(circle at 100% 0%, rgba(57,255,110,{BG_GLOW_LIME_OPACITY}) 0%, rgba(57,255,110,0) {BG_GLOW_LIME_RADIUS_PCT}%),
+            radial-gradient(circle at 0% 100%, rgba(62,232,255,0.06) 0%, rgba(62,232,255,0) 34%),
             repeating-linear-gradient(to right, rgba(255,255,255,{BG_GRID_MAJOR_OPACITY}) 0 1px, transparent 1px {BG_GRID_MAJOR_SPACING_PX}px),
             repeating-linear-gradient(to bottom, rgba(255,255,255,{BG_GRID_MAJOR_OPACITY}) 0 1px, transparent 1px {BG_GRID_MAJOR_SPACING_PX}px),
             repeating-linear-gradient(to right, rgba(255,255,255,{BG_GRID_FINE_OPACITY}) 0 1px, transparent 1px {BG_GRID_FINE_SPACING_PX}px),
-            repeating-linear-gradient(to bottom, rgba(255,255,255,{BG_GRID_FINE_OPACITY}) 0 1px, transparent 1px {BG_GRID_FINE_SPACING_PX}px);
-        background-size: 100% 100%, 100% 100%, auto, auto, auto, auto;
-        background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0;
-        background-repeat: no-repeat, no-repeat, repeat, repeat, repeat, repeat;
-        background-attachment: fixed, fixed, fixed, fixed, fixed, fixed;
+            repeating-linear-gradient(to bottom, rgba(255,255,255,{BG_GRID_FINE_OPACITY}) 0 1px, transparent 1px {BG_GRID_FINE_SPACING_PX}px),
+            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch' result='t'/%3E%3CfeColorMatrix in='t' type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        background-size: 100% 100%, 100% 100%, 100% 100%, auto, auto, auto, auto, 120px 120px;
+        background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0;
+        background-repeat: no-repeat, no-repeat, no-repeat, repeat, repeat, repeat, repeat, repeat;
+        background-attachment: fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed;
     }}
     /* The diagonal green "laser edge" -- unchanged mechanism from v2 (fixed
        pseudo-element bounded to the upper-right quadrant), just recolored. See
@@ -860,6 +862,39 @@ st.markdown(f"""
     @keyframes scanlineDrift {{
         from {{ background-position-y: 0px; }}
         to {{ background-position-y: 6px; }}
+    }}
+
+    /* Fixed viewport-corner HUD tags (v3.3, new) -- small persistent chrome
+       around the page edges, the last bit of "more cyberpunk background"
+       texture beyond the grid/glow/scanline/noise layers above. position:
+       fixed so they hold their corner regardless of scroll, like a HUD
+       frame; pointer-events: none so they're purely decorative and never
+       intercept a click meant for the real content scrolling underneath
+       them. Deliberately avoids the top-right corner -- that's Streamlit's
+       own Deploy/menu chrome, not ours to cover. z-index set very high
+       (Streamlit's own sidebar/header chrome otherwise paints over a fixed
+       element at a "normal" z-index, since those establish their own
+       stacking context) -- pointer-events: none means going this high can
+       never accidentally block a real click, so there's no real downside
+       to clearing every other layer this way. */
+    .hud-corner-tag {{
+        position: fixed; z-index: 999999; pointer-events: none;
+        display: inline-flex; align-items: center; gap: 6px;
+        border: 1px solid {PANEL_BORDER}; background: rgba(10,13,10,0.55);
+        padding: 4px 10px; font-family: {MONO_STACK} !important; font-size: 0.68rem;
+        letter-spacing: 1px; text-transform: uppercase; color: {TEXT_MUTED};
+    }}
+    .hud-corner-tl {{ top: 58px; left: 12px; }}
+    .hud-corner-bl {{ bottom: 12px; left: 12px; }}
+    .hud-corner-br {{ bottom: 12px; right: 12px; }}
+    .hud-corner-tag .pulse-dot {{
+        width: 6px; height: 6px; background: {LIME};
+        box-shadow: 0 0 6px rgba(57,255,110,0.8);
+        animation: hudPulse 1.8s ease-in-out infinite;
+    }}
+    @keyframes hudPulse {{
+        0%, 100% {{ opacity: 1; }}
+        50% {{ opacity: 0.25; }}
     }}
     * {{ font-family: {FONT_STACK} !important; }}
     /* Streamlit renders its chevrons/arrows as ligature text in a bundled local icon
@@ -1172,6 +1207,17 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
+# Fixed corner HUD tags -- see the .hud-corner-tag CSS comment above for why
+# these are position: fixed + pointer-events: none. Top-left and bottom-left
+# need no runtime data so they render here, right after the stylesheet;
+# bottom-right (ticker universe count) renders later, right after `universe`
+# is computed, so it can show a real number instead of a placeholder.
+st.markdown(
+    '<div class="hud-corner-tag hud-corner-tl">X-RAY.SYS</div>'
+    '<div class="hud-corner-tag hud-corner-bl"><span class="pulse-dot"></span>LIVE</div>',
+    unsafe_allow_html=True,
+)
+
 # Centered hero: badge -> two-tone title -> subtitle -> disclaimer, full width
 # and center-aligned (see the .masthead-center/.app-title/.app-subtitle CSS
 # above). v3 dropped the live sparkline preview that used to sit beside/below
@@ -1264,6 +1310,10 @@ except AssertionError as e:
     st.stop()
 
 universe = fl.available_tickers(prices)
+st.markdown(
+    f'<div class="hud-corner-tag hud-corner-br">UNIVERSE:{len(universe)}</div>',
+    unsafe_allow_html=True,
+)
 
 # ticker -> category, for the grouped multiselect and the sidebar universe browser
 categories = pp.categories_for_app()
@@ -1866,12 +1916,6 @@ if 2 not in st.session_state["unlocked_steps"]:
         st.plotly_chart(preview_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
                          key="your_mix_chart")
         st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in weights_pct_map.items()))
-        if st.button("⚖️ Normalize to 100%", key="auto_balance_btn"):
-            total = sum(weights_pct_map.values())
-            if total > 0:
-                st.session_state["weight_map"] = {t: w / total * 100.0 for t, w in weights_pct_map.items()}
-                st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
-                st.rerun()
 
     st.markdown('<div style="margin-top:10px;"></div>', unsafe_allow_html=True)
 st.markdown('<div class="section-label">MORE OPTIONS</div>', unsafe_allow_html=True)
