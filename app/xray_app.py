@@ -1601,7 +1601,13 @@ with st.container(border=True, key="step1_box"):
     # directly), not a widget's own session_state key, so none of these
     # buttons need the deferred "pending write + rerun" dance that widget
     # keys (like the multiselect this replaced) would require.
-    add_col, btn_col = st.columns([5, 1])
+    # Weight-on-add (v3.2) -- a number_input next to the search box so a
+    # ticker can be given a starting weight in the same click as adding it,
+    # instead of always landing at 0% and requiring a second trip down to its
+    # table row. Left at its last-entered value across adds on purpose (not
+    # reset to 0 after each click) -- adding several tickers at the same
+    # weight in a row is a real workflow, and resetting it would fight that.
+    add_col, weight_col, btn_col = st.columns([3.4, 1.3, 1])
     with add_col:
         addable = [t for t in sorted_universe if t not in st.session_state["selected_tickers"]]
         ticker_to_add = st.selectbox(
@@ -1613,14 +1619,31 @@ with st.container(border=True, key="step1_box"):
             placeholder="Search by ticker or category to add…",
             label_visibility="collapsed",
         )
+    with weight_col:
+        ticker_add_weight = st.number_input(
+            "Weight % to add at", min_value=0.0, max_value=100.0, step=1.0, value=0.0,
+            key="ticker_add_weight", label_visibility="collapsed",
+        )
     with btn_col:
         if st.button("+ Add", key="ticker_add_btn", width="stretch", disabled=ticker_to_add is None):
             st.session_state["selected_tickers"] = st.session_state["selected_tickers"] + [ticker_to_add]
+            if ticker_add_weight > 0:
+                st.session_state["weight_map"] = {
+                    **st.session_state["weight_map"], ticker_to_add: ticker_add_weight,
+                }
+                st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
             st.rerun()
 
     selected = st.session_state["selected_tickers"]
     if selected:
-        st.caption("In your portfolio -- click to remove:")
+        chip_row_cols = st.columns([5, 1.3])
+        with chip_row_cols[0]:
+            st.caption("In your portfolio -- click to remove:")
+        with chip_row_cols[1]:
+            if st.button("Remove all", key="remove_all_tickers", width="stretch"):
+                st.session_state["selected_tickers"] = []
+                st.session_state["weight_map"] = {}
+                st.rerun()
         remove_cols = st.columns(min(len(selected), 7))
         for i, t in enumerate(selected):
             with remove_cols[i % len(remove_cols)]:
@@ -1631,15 +1654,16 @@ with st.container(border=True, key="step1_box"):
     weights_pct_map = {}
     if selected:
         version = st.session_state["weight_map_version"]
-        header_cols = st.columns([2, 3])
+        header_cols = st.columns([2, 3, 0.6])
         with header_cols[0]:
             st.markdown(f'<div style="color:{TEXT_MUTED}; font-size:0.78rem;">TICKER</div>',
                         unsafe_allow_html=True)
         with header_cols[1]:
             st.markdown(f'<div style="color:{TEXT_MUTED}; font-size:0.78rem;">WEIGHT %</div>',
                         unsafe_allow_html=True)
+        row_removed = False
         for t in selected:
-            row_cols = st.columns([2, 3])
+            row_cols = st.columns([2, 3, 0.6])
             with row_cols[0]:
                 st.markdown(f'<div style="padding-top:10px; font-weight:600;">{t}</div>',
                             unsafe_allow_html=True)
@@ -1654,6 +1678,17 @@ with st.container(border=True, key="step1_box"):
                     value=float(st.session_state["weight_map"].get(t, 0.0)),
                     key=f"weight_input_{t}_v{version}", label_visibility="collapsed",
                 )
+            with row_cols[2]:
+                # Same remove action as the chip strip above, surfaced again
+                # right on the row being edited -- so removing a stock doesn't
+                # require scrolling back up to its chip once you're down here
+                # adjusting weights.
+                if st.button("✕", key=f"remove_row_{t}", width="stretch"):
+                    st.session_state["selected_tickers"] = [x for x in selected if x != t]
+                    st.session_state["weight_map"].pop(t, None)
+                    row_removed = True
+        if row_removed:
+            st.rerun()
         st.session_state["weight_map"] = dict(weights_pct_map)
         st.caption(
             "Type a weight or use the −/+ steppers, then press Enter (or click away) to apply it. "
