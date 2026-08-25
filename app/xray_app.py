@@ -823,6 +823,22 @@ st.markdown(f"""
         background-repeat: no-repeat, no-repeat, no-repeat, repeat, repeat, repeat, repeat, repeat;
         background-attachment: fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed;
     }}
+    /* One-screen wizard (v4) -- Streamlit scrolls its OWN inner pane
+       (section[data-testid="stMain"], confirmed via direct measurement),
+       not the document, so freezing the outer page means freezing this
+       element specifically. Reclaims the framework's large default
+       block-container bottom padding too, since that space is now
+       competing with the step panels below for the same fixed viewport
+       instead of just being slack on an infinitely-scrolling page. */
+    /* Deliberately NOT overflow-y: hidden here -- Streamlit reserves this
+       pane's layout height from the Python-side st.container(height=...)
+       value regardless of any CSS override on the visible box, so a short
+       enough STEP_PAGE_HEIGHT (see its own comment) keeps this from ever
+       needing to scroll on a typical window, but a hard hidden would
+       silently clip content out of reach on an unusually short one --
+       auto is the safe fallback, not the primary mechanism. */
+    section[data-testid="stMain"] {{ overflow-y: auto; }}
+    .block-container {{ padding-bottom: 1rem !important; }}
     /* The diagonal green "laser edge" -- unchanged mechanism from v2 (fixed
        pseudo-element bounded to the upper-right quadrant), just recolored. See
        the historical comment this replaced for why it's built this way (bounded
@@ -1172,15 +1188,20 @@ st.markdown(f"""
         from {{ opacity: 0; transform: translateY(16px); }}
         to {{ opacity: 1; transform: translateY(0); }}
     }}
-    /* Slim, non-clickable "how far did I get" indicator -- see render_progress_dots().
-       Squares, not circles (zero-radius rule), each rotated 45deg into a small
-       diamond "reticle" mark, same shape language as .masthead-badge-dot. */
-    .progress-dots {{ display: flex; gap: 8px; align-items: center; margin: 2px 0 22px 0; }}
-    .progress-dot {{
-        width: 6px; height: 6px; background: rgba(255,255,255,0.14); transform: rotate(45deg);
-        transition: background 0.35s ease, box-shadow 0.35s ease;
+    /* Persistent step-nav taskbar (v4) -- see render_step_taskbar(). Compact
+       bracket-button chips for unlocked steps (reuses the site-wide
+       .stButton styling, just shrunk to fit 8 across); locked steps render
+       as an inert dimmed label instead of a button, so the whole journey
+       stays visible up front without implying it's clickable yet. */
+    .st-key-step_taskbar {{ margin-bottom: 14px; }}
+    .st-key-step_taskbar .stButton button {{
+        padding: 6px 4px; font-size: 0.68rem; width: 100%;
     }}
-    .progress-dot.is-unlocked {{ background: {LIME}; box-shadow: 0 0 6px rgba(57,255,110,0.55); }}
+    .step-chip-locked {{
+        text-align: center; font-family: {MONO_STACK}; font-size: 0.68rem;
+        text-transform: uppercase; letter-spacing: 0.6px; color: {TEXT_MUTED};
+        opacity: 0.4; padding: 6px 4px; border: 1px solid {PANEL_BORDER};
+    }}
 
     /* Persistent footer watermark -- deliberately quiet: small, muted, centered,
        plenty of top margin so it reads as a signature line, not another panel.
@@ -1382,8 +1403,34 @@ def section_header(number: str, title: str) -> None:
 STEP_NAMES = {0: "Why", 1: "Build", 2: "Headline", 3: "Last year", 4: "Compare",
               5: "Repricing", 6: "Menu", 7: "Bonus"}
 
+# One-screen wizard (v4) -- each step now lives in its own fixed-height,
+# independently-scrollable st.container(key=f"step_page_{n}", height=...)
+# instead of stacking indefinitely down the page. Only the ACTIVE page is
+# visible at a time -- see render_step_taskbar()'s per-run CSS injection
+# below -- but every page container still executes unconditionally every
+# rerun regardless of which is visible, since Step 1's page computes
+# `weights`, which every later step depends on.
+#
+# STEP_PAGE_HEIGHT is a plain pixel constant, not viewport-relative: tried a
+# CSS `height: calc(100vh - Xpx)` override first, but Streamlit reserves
+# this pane's own layout space from the Python-side height= value directly
+# (independent of any CSS applied to the rendered box), so a CSS-only
+# override left a dead gap equal to the difference between the two. 420px
+# was picked empirically (measured chrome above the first step panel --
+# header + masthead/badge/glyph + taskbar -- at ~546px, so 420 fits inside a
+# typical ~1000px+ browser viewport without the outer pane needing to
+# scroll); on a shorter window the pane falls back to its own scroll rather
+# than clipping content out of reach (see the deliberately-not-hidden
+# overflow-y note on section[data-testid="stMain"] below). Compact steps (0,
+# 2, 3, 5, 6, 7) fit inside it with room to spare; Step 1 (variable-length
+# ticker/weight table) and Step 4 (chart + up to ~9 sector cards) are the two
+# expected to actually use their own internal scrollbar.
+STEP_PAGE_HEIGHT = 420
+
 if "unlocked_steps" not in st.session_state:
     st.session_state["unlocked_steps"] = {0}
+if "active_step" not in st.session_state:
+    st.session_state["active_step"] = 0
 
 # Button-gated reveal animation -- shared by every "click to reveal already-
 # computed results" gate in this app (currently: the AI%-calculation gate
@@ -1440,16 +1487,49 @@ def unlock_step(n: int) -> bool:
     return True
 
 
-def render_progress_dots() -> None:
-    """Slim, non-clickable progress indicator for returning users -- a visual
-    sense of how far they already got, not jump-ahead nav (jumping still
-    requires going through Step 1's portfolio construction)."""
+def render_step_taskbar() -> None:
+    """Persistent HUD step-nav bar (v4, replaces the old non-clickable
+    render_progress_dots) -- real navigation for unlocked steps (a plain
+    st.button per step, picking up the site-wide bracket-button styling for
+    free), a dimmed inert label for anything still locked, so the whole
+    journey stays visible even though only unlocked steps are reachable.
+    Also emits the per-run CSS that hides every step_page_* container except
+    the currently active one -- regenerated every run since active_step can
+    change on any click."""
     unlocked = st.session_state["unlocked_steps"]
-    dots = "".join(
-        f'<span class="progress-dot{" is-unlocked" if n in unlocked else ""}" title="{STEP_NAMES[n]}"></span>'
-        for n in STEP_NAMES
+    active = st.session_state["active_step"]
+    with st.container(key="step_taskbar"):
+        cols = st.columns(len(STEP_NAMES))
+        for n, col in zip(STEP_NAMES, cols):
+            with col:
+                if n in unlocked:
+                    if st.button(STEP_NAMES[n], key=f"navchip_{n}", width="stretch"):
+                        st.session_state["active_step"] = n
+                        st.rerun()
+                else:
+                    st.markdown(
+                        f'<div class="step-chip-locked">{STEP_NAMES[n]}</div>',
+                        unsafe_allow_html=True,
+                    )
+    # Streamlit wraps every height-bound st.container(height=...) in an outer
+    # div[data-testid="stLayoutWrapper"] that does NOT carry the .st-key-...
+    # class -- only its inner child does. Hiding just the inner div (display:
+    # none on .st-key-step_page_N alone) left the outer flex wrapper still
+    # reserving its full declared height as empty space once more than one
+    # page existed in the DOM at once (confirmed by measurement: 8 stacked
+    # 420px-tall ghost slots instead of 1). :has() reaches up to the actual
+    # outer wrapper so the hidden page truly collapses to zero height.
+    hide_rules = "".join(
+        f'div[data-testid="stLayoutWrapper"]:has(.st-key-step_page_{n}) {{ display: none; }}'
+        for n in STEP_NAMES if n != active
     )
-    st.markdown(f'<div class="progress-dots">{dots}</div>', unsafe_allow_html=True)
+    active_rule = (
+        f".st-key-navchip_{active} button {{ background-color:{LIME} !important; "
+        f"color:{BG_APP} !important; border-color:{LIME} !important; "
+        f"box-shadow: 0 0 14px rgba(57,255,110,0.5) !important; }}"
+        if active in unlocked else ""
+    )
+    st.html(f"<style>{hide_rules}{active_rule}</style>")
 
 
 def step_anchor(n: int) -> None:
@@ -1508,6 +1588,7 @@ if "_shared_link_checked" not in st.session_state:
             st.session_state["weight_map"] = dict(shared_weights)
             st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
             unlock_step(1)
+            st.session_state["active_step"] = 1
 
 # Consumed once, right after the "Copy shareable link" button's own st.rerun()
 # (see the donut section below) -- st.query_params was already set to the new
@@ -1525,7 +1606,7 @@ if st.session_state.pop("_flash_copy_link", False):
     )
     st.toast("Shareable link copied — this portfolio is now saved in the URL.")
 
-render_progress_dots()
+render_step_taskbar()
 
 # ============================================================================
 # Step 0 -- why this exists, plus a real-world proof point (QQQM) that a
@@ -1535,46 +1616,48 @@ render_progress_dots()
 # reaction to the user's own portfolio.
 # ============================================================================
 
-section_header("0", "Why this exists")
-with st.container(border=True):
-    st.markdown(
-        "Passive investors buy \"diversified\" funds expecting broad, stable exposure. "
-        "But an index's composition drifts as its constituent weights shift over time, and "
-        "most holders never notice. The fund's name and stated strategy stay exactly the "
-        "same, even while what it actually holds, and what actually drives its returns, "
-        "quietly changes underneath it."
-    )
+with st.container(key="step_page_0", height=STEP_PAGE_HEIGHT):
+    section_header("0", "Why this exists")
+    with st.container(border=True):
+        st.markdown(
+            "Passive investors buy \"diversified\" funds expecting broad, stable exposure. "
+            "But an index's composition drifts as its constituent weights shift over time, and "
+            "most holders never notice. The fund's name and stated strategy stay exactly the "
+            "same, even while what it actually holds, and what actually drives its returns, "
+            "quietly changes underneath it."
+        )
 
-    # Reuses Module 1's own sourced concentration history (RBC Wealth
-    # Management / press consensus / CryptoBriefing -- see
-    # m1_concentration.py's CONCENTRATION_HISTORY comment) instead of a DIY
-    # price-ratio proxy. Two prior from-price constructions were investigated
-    # and dropped for this panel; see LIMITATIONS.md, Module 4.
-    history_df = get_concentration_history_df()
-    hist_fig = render_concentration_history_chart(history_df)
-    st.plotly_chart(hist_fig, theme=None, width="stretch", config=PLOTLY_CONFIG)
+        # Reuses Module 1's own sourced concentration history (RBC Wealth
+        # Management / press consensus / CryptoBriefing -- see
+        # m1_concentration.py's CONCENTRATION_HISTORY comment) instead of a DIY
+        # price-ratio proxy. Two prior from-price constructions were investigated
+        # and dropped for this panel; see LIMITATIONS.md, Module 4.
+        history_df = get_concentration_history_df()
+        hist_fig = render_concentration_history_chart(history_df)
+        st.plotly_chart(hist_fig, theme=None, width="stretch", config=PLOTLY_CONFIG)
 
-    hist_start_year = int(history_df["year"].iloc[0])
-    hist_early_pct = history_df.loc[history_df["year"] == 1990, "pct"].iloc[0]
-    hist_early_end_year = int(history_df.loc[history_df["year"] <= 2015, "year"].max())
-    hist_current_pct = history_df["pct"].iloc[-1]
-    st.caption(
-        f"The S&P 500 has been marketed as \"a broad, diversified market index\" since "
-        f"{hist_start_year}, and its name and stated strategy haven't changed since. What has "
-        f"changed is how much of the index sits in its top 10 holdings: {hist_early_pct:.0f}% "
-        f"for a quarter-century ({hist_start_year}-{hist_early_end_year}), {hist_current_pct:.0f}% "
-        f"today, nearly double the level right before the 2000 dot-com crash. That's composition "
-        f"drift happening in plain sight, inside the most widely held index in the world."
-    )
+        hist_start_year = int(history_df["year"].iloc[0])
+        hist_early_pct = history_df.loc[history_df["year"] == 1990, "pct"].iloc[0]
+        hist_early_end_year = int(history_df.loc[history_df["year"] <= 2015, "year"].max())
+        hist_current_pct = history_df["pct"].iloc[-1]
+        st.caption(
+            f"The S&P 500 has been marketed as \"a broad, diversified market index\" since "
+            f"{hist_start_year}, and its name and stated strategy haven't changed since. What has "
+            f"changed is how much of the index sits in its top 10 holdings: {hist_early_pct:.0f}% "
+            f"for a quarter-century ({hist_start_year}-{hist_early_end_year}), {hist_current_pct:.0f}% "
+            f"today, nearly double the level right before the 2000 dot-com crash. That's composition "
+            f"drift happening in plain sight, inside the most widely held index in the world."
+        )
 
-    st.markdown("**This app measures the same drift for any portfolio you build below.**")
+        st.markdown("**This app measures the same drift for any portfolio you build below.**")
 
-    if 1 not in st.session_state["unlocked_steps"]:
-        st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
-        if st.button("Show me how →", key="step0_continue", type="primary"):
-            if unlock_step(1):
-                st.session_state["_flash_animate"] = {1}
-            st.rerun()
+        if 1 not in st.session_state["unlocked_steps"]:
+            st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
+            if st.button("Show me how →", key="step0_continue", type="primary"):
+                if unlock_step(1):
+                    st.session_state["_flash_animate"] = {1}
+                st.session_state["active_step"] = 1
+                st.rerun()
 
 # ============================================================================
 # Sidebar -- diagnostics, quick presets, ticker universe browser
@@ -1614,6 +1697,7 @@ with st.sidebar:
         # ticker entry would trigger).
         if unlock_step(1):
             st.session_state["_flash_animate"] = {1}
+        st.session_state["active_step"] = 1
         st.rerun()
 
     st.markdown("---")
@@ -1632,397 +1716,407 @@ with st.sidebar:
 if 1 not in st.session_state["unlocked_steps"]:
     st.stop()
 
-step_anchor(1)
-section_header("1", "Build your portfolio")
+with st.container(key="step_page_1", height=STEP_PAGE_HEIGHT):
+    step_anchor(1)
+    section_header("1", "Build your portfolio")
 
-st.caption(
-    f"Covers {len(universe)} tickers across major US index funds, sector ETFs, and mega-cap "
-    "stocks, all cached locally ahead of time. Nothing is fetched live, so search below to "
-    "see if yours is included; if it isn't, this tool can't measure it yet."
-)
-st.caption(
-    "Pre-loaded below is a broad-market core plus a Nasdaq-growth fund and a couple of "
-    "single-stock adds. It's a common self-directed mix, not the textbook two/three-fund "
-    "passive portfolio, shown here as an example of how a reasonable, still-mostly-passive "
-    "portfolio can drift toward AI exposure a ticker at a time. Change it to anything below."
-)
+    st.caption(
+        f"Covers {len(universe)} tickers across major US index funds, sector ETFs, and mega-cap "
+        "stocks, all cached locally ahead of time. Nothing is fetched live, so search below to "
+        "see if yours is included; if it isn't, this tool can't measure it yet."
+    )
+    st.caption(
+        "Pre-loaded below is a broad-market core plus a Nasdaq-growth fund and a couple of "
+        "single-stock adds. It's a common self-directed mix, not the textbook two/three-fund "
+        "passive portfolio, shown here as an example of how a reasonable, still-mostly-passive "
+        "portfolio can drift toward AI exposure a ticker at a time. Change it to anything below."
+    )
 
-if "selected_tickers" not in st.session_state:
-    st.session_state["selected_tickers"] = list(DEFAULT_PORTFOLIO.keys())
-if "weight_map" not in st.session_state:
-    st.session_state["weight_map"] = dict(DEFAULT_PORTFOLIO)
-# Bumped every time weight_map is replaced wholesale from OUTSIDE the weight
-# inputs below (preset load, sector-card pick, shared link, Normalize) --
-# each ticker's st.number_input is keyed on this version, so a bulk replace
-# gives every box a fresh key and therefore picks up its new `value=`
-# instead of a stale one, without needing to touch each key individually.
-# A single per-ticker edit (typing into that ticker's own box) does NOT bump
-# this -- Streamlit already reflects that edit via the widget's own state.
-if "weight_map_version" not in st.session_state:
-    st.session_state["weight_map_version"] = 0
+    if "selected_tickers" not in st.session_state:
+        st.session_state["selected_tickers"] = list(DEFAULT_PORTFOLIO.keys())
+    if "weight_map" not in st.session_state:
+        st.session_state["weight_map"] = dict(DEFAULT_PORTFOLIO)
+    # Bumped every time weight_map is replaced wholesale from OUTSIDE the weight
+    # inputs below (preset load, sector-card pick, shared link, Normalize) --
+    # each ticker's st.number_input is keyed on this version, so a bulk replace
+    # gives every box a fresh key and therefore picks up its new `value=`
+    # instead of a stale one, without needing to touch each key individually.
+    # A single per-ticker edit (typing into that ticker's own box) does NOT bump
+    # this -- Streamlit already reflects that edit via the widget's own state.
+    if "weight_map_version" not in st.session_state:
+        st.session_state["weight_map_version"] = 0
 
-animate_container("step1_box", 1, animate_now)
-with st.container(border=True, key="step1_box"):
-    # Ticker add/remove now lives entirely in this container instead of split
-    # across a multiselect widget + a collapsed "manual entry" expander --
-    # "selected_tickers" is plain app state here (a list we read/write
-    # directly), not a widget's own session_state key, so none of these
-    # buttons need the deferred "pending write + rerun" dance that widget
-    # keys (like the multiselect this replaced) would require.
-    # Weight-on-add (v3.2) -- a number_input next to the search box so a
-    # ticker can be given a starting weight in the same click as adding it,
-    # instead of always landing at 0% and requiring a second trip down to its
-    # table row. Left at its last-entered value across adds on purpose (not
-    # reset to 0 after each click) -- adding several tickers at the same
-    # weight in a row is a real workflow, and resetting it would fight that.
-    add_col, weight_col, btn_col = st.columns([3.4, 1.3, 1])
-    with add_col:
-        addable = [t for t in sorted_universe if t not in st.session_state["selected_tickers"]]
-        ticker_to_add = st.selectbox(
-            "Add a ticker",
-            options=addable,
-            format_func=lambda t: f"{t} ({category_of[t]})",
-            key="ticker_add_select",
-            index=None,
-            placeholder="Search by ticker or category to add…",
+    animate_container("step1_box", 1, animate_now)
+    with st.container(border=True, key="step1_box"):
+        # Ticker add/remove now lives entirely in this container instead of split
+        # across a multiselect widget + a collapsed "manual entry" expander --
+        # "selected_tickers" is plain app state here (a list we read/write
+        # directly), not a widget's own session_state key, so none of these
+        # buttons need the deferred "pending write + rerun" dance that widget
+        # keys (like the multiselect this replaced) would require.
+        # Weight-on-add (v3.2) -- a number_input next to the search box so a
+        # ticker can be given a starting weight in the same click as adding it,
+        # instead of always landing at 0% and requiring a second trip down to its
+        # table row. Left at its last-entered value across adds on purpose (not
+        # reset to 0 after each click) -- adding several tickers at the same
+        # weight in a row is a real workflow, and resetting it would fight that.
+        add_col, weight_col, btn_col = st.columns([3.4, 1.3, 1])
+        with add_col:
+            addable = [t for t in sorted_universe if t not in st.session_state["selected_tickers"]]
+            ticker_to_add = st.selectbox(
+                "Add a ticker",
+                options=addable,
+                format_func=lambda t: f"{t} ({category_of[t]})",
+                key="ticker_add_select",
+                index=None,
+                placeholder="Search by ticker or category to add…",
+                label_visibility="collapsed",
+            )
+        with weight_col:
+            ticker_add_weight = st.number_input(
+                "Weight % to add at", min_value=0.0, max_value=100.0, step=1.0, value=0.0,
+                key="ticker_add_weight", label_visibility="collapsed",
+            )
+        with btn_col:
+            if st.button("+ Add", key="ticker_add_btn", width="stretch", disabled=ticker_to_add is None):
+                st.session_state["selected_tickers"] = st.session_state["selected_tickers"] + [ticker_to_add]
+                if ticker_add_weight > 0:
+                    st.session_state["weight_map"] = {
+                        **st.session_state["weight_map"], ticker_to_add: ticker_add_weight,
+                    }
+                    st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
+                st.rerun()
+
+        selected = st.session_state["selected_tickers"]
+        if selected:
+            chip_row_cols = st.columns([5, 1.3])
+            with chip_row_cols[0]:
+                st.caption("In your portfolio -- click to remove:")
+            with chip_row_cols[1]:
+                if st.button("Remove all", key="remove_all_tickers", width="stretch"):
+                    st.session_state["selected_tickers"] = []
+                    st.session_state["weight_map"] = {}
+                    st.rerun()
+            remove_cols = st.columns(min(len(selected), 7))
+            for i, t in enumerate(selected):
+                with remove_cols[i % len(remove_cols)]:
+                    if st.button(f"{t} ✕", key=f"remove_chip_{t}", width="stretch"):
+                        st.session_state["selected_tickers"] = [x for x in selected if x != t]
+                        st.rerun()
+
+        weights_pct_map = {}
+        if selected:
+            version = st.session_state["weight_map_version"]
+            header_cols = st.columns([2, 3, 0.6])
+            with header_cols[0]:
+                st.markdown(f'<div style="color:{TEXT_MUTED}; font-size:0.78rem;">TICKER</div>',
+                            unsafe_allow_html=True)
+            with header_cols[1]:
+                st.markdown(f'<div style="color:{TEXT_MUTED}; font-size:0.78rem;">WEIGHT %</div>',
+                            unsafe_allow_html=True)
+            row_removed = False
+            for t in selected:
+                row_cols = st.columns([2, 3, 0.6])
+                with row_cols[0]:
+                    st.markdown(f'<div style="padding-top:10px; font-weight:600;">{t}</div>',
+                                unsafe_allow_html=True)
+                with row_cols[1]:
+                    # Keyed on weight_map_version, not just the ticker, so a bulk
+                    # replace of weight_map (preset/sector pick/shared
+                    # link/Normalize -- see the version-bump comment above) gives
+                    # this box a fresh widget identity and re-reads `value=`
+                    # instead of Streamlit preserving whatever was last typed here.
+                    weights_pct_map[t] = st.number_input(
+                        f"{t} weight", min_value=0.0, max_value=100.0, step=5.0,
+                        value=float(st.session_state["weight_map"].get(t, 0.0)),
+                        key=f"weight_input_{t}_v{version}", label_visibility="collapsed",
+                    )
+                with row_cols[2]:
+                    # Same remove action as the chip strip above, surfaced again
+                    # right on the row being edited -- so removing a stock doesn't
+                    # require scrolling back up to its chip once you're down here
+                    # adjusting weights.
+                    if st.button("✕", key=f"remove_row_{t}", width="stretch"):
+                        st.session_state["selected_tickers"] = [x for x in selected if x != t]
+                        st.session_state["weight_map"].pop(t, None)
+                        row_removed = True
+            if row_removed:
+                st.rerun()
+            st.session_state["weight_map"] = dict(weights_pct_map)
+            st.caption(
+                "Type a weight or use the −/+ steppers, then press Enter (or click away) to apply it. "
+                "New tickers start at 0%, so update the weight yourself, or hit Normalize below once "
+                "your mix adds up to 100%."
+            )
+
+        weights, errors, warnings_ = validate_weights(weights_pct_map)
+
+        for w in warnings_:
+            st.info(w)
+
+        if errors:
+            for e in errors:
+                st.error(e)
+            total = sum(weights_pct_map.values())
+            if total > 0:
+                if st.button("Normalize weights to 100%"):
+                    st.session_state["weight_map"] = {t: w / total * 100.0 for t, w in weights_pct_map.items()}
+                    st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
+                    st.rerun()
+            st.stop()
+
+    # ============================================================================
+    # Cascade unlock -- reaching here means the weights above validated (the
+    # errors branch just above already st.stop()'d otherwise), so every
+    # downstream step in this list has what it needs and they unlock together.
+    # See the "Progressive step-reveal state" comment near the top of the script
+    # for why this cascades instead of gating on N separate clicks. This is a
+    # no-op after the first time a valid portfolio exists in this session
+    # (unlock_step() returns False for anything already unlocked), so re-editing
+    # Step 1's weights later doesn't re-trigger it or re-lock anything.
+    #
+    # Steps 2, 3, and 4 (donut/headline AI%, the realized-return panel, and the
+    # comparison bar that plots the same beta_pct) and steps 5 and 6 (repricing
+    # scenario bars + tradeoff scatter) are deliberately NOT in this list -- each
+    # group is gated behind its own explicit button + progress animation instead
+    # (see the "Calculate my AI %" gate right after the Computation block, and
+    # the "Run repricing simulation" gate right before Step 5's header). Step 3
+    # used to be here (auto-unlocked) -- moved out because that let "Your
+    # portfolio, the last year" render before the AI%-calculation button was
+    # ever clicked; see that section's own comment. Bonus (7) is unrelated to
+    # either gate and stays automatic.
+    # ============================================================================
+    CASCADE_STEPS = (7,)
+    newly_cascade = {n for n in CASCADE_STEPS if unlock_step(n)}
+    if newly_cascade:
+        st.session_state["_flash_animate"] = newly_cascade
+        st.rerun()
+
+    # ============================================================================
+    # Computation -- spinner covers exactly this block. The get_*/load_* calls are
+    # @st.cache_data, so this is only slow on a cold cache (first load, or a DB
+    # change); on every later rerun of an already-computed portfolio they return
+    # instantly and the spinner flashes too briefly to notice, by design -- no
+    # special "is this cached?" branching needed, that's what st.cache_data gives us.
+    # ============================================================================
+
+    with st.spinner("X-raying your portfolio…"):
+        simple_returns = get_simple_returns(prices)
+        ai_log = get_ai_log(prices)
+        rest_factor_252, ai_756, rest_factor_756 = get_rest_factors(prices)
+        ai_shock_no_bubble, rest_shock_no_bubble = get_no_bubble_shocks(prices)
+        m2_shocks = get_m2_shocks()
+        m1_table = get_m1_table()
+        spy_rolling = get_spy_rolling_beta(prices)
+
+        user_simple = fl.build_portfolio_simple_returns(simple_returns, weights)
+        user_log = fl.to_log_returns(user_simple)
+
+        overlap = fl.overlapping_obs_count(user_log, ai_log)
+        if overlap < fl.MIN_REGRESSION_OBS:
+            st.error(
+                f"Only {overlap} overlapping trading day(s) between these tickers and the AI basket. "
+                f"That's not enough to compute a beta, so try a different mix."
+            )
+            st.stop()
+
+        single = fl.single_factor_regress(user_log, ai_log)
+        two_factor = fl.two_factor_regress(user_log, ai_log, rest_factor_252)
+
+        # Cap-weighted sensitivity check for the "Why these 8 tickers?" expander only
+        # -- see get_ai_log_capweighted's own comment for why this doesn't touch the
+        # headline number or anything downstream of it.
+        ai_log_capweighted = get_ai_log_capweighted(prices)
+        beta_pct_capweighted = fl.single_factor_regress(user_log, ai_log_capweighted)["beta"] * 100
+
+        n_obs = single["n_obs"]
+
+        # Realized last-year return (Step 3 panel) -- SIMPLE-return compounding, indexed
+        # to 100 at the window's start, same convention as m2_replay.py's crash-replay
+        # charts. Aligned against SPY over the SAME trailing dates the user's own
+        # portfolio has data for, so a short-history holding doesn't get compared
+        # against a SPY window it didn't actually overlap with.
+        user_indexed, spy_indexed, realized_n_days = fl.indexed_cumulative_returns(
+            user_simple, simple_returns["SPY"], fl.WINDOW
+        )
+        user_return_pct = user_indexed.iloc[-1] - 100
+        spy_return_pct = spy_indexed.iloc[-1] - 100
+
+        beta_pct = single["beta"] * 100
+        r_squared = single["r_squared"]
+
+        # direct weight: see factor_lib.compute_direct_weight_pct for the resolution rules
+        # (AI-basket member / named reference portfolio / known-zero bond-commodity fund /
+        # genuinely unresolvable). Pulled out of this file so it's unit-testable without
+        # Streamlit -- see tests/test_factor_lib.py.
+        user_direct_pct, unresolvable = fl.compute_direct_weight_pct(weights)
+
+        proj_no_bubble = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], ai_shock_no_bubble, rest_shock_no_bubble) * 100
+        proj_2022 = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["2022_ai_shock"], m2_shocks["2022_rest_shock"]) * 100
+        proj_2008 = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["gfc_ai_shock"], m2_shocks["gfc_rest_shock"]) * 100
+        proj_dotcom = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"]) * 100
+
+        # Rolling beta -- computed exactly once here, reused by the Step 6 bonus
+        # expander further down (see its own comment). Not wrapped in
+        # @st.cache_data since it depends on the user's arbitrary weights dict;
+        # it's a cheap vectorized computation either way.
+        user_rolling_full = fl.rolling_beta(user_log, ai_log, fl.WINDOW)
+
+    # ============================================================================
+    # Sector preset gallery -- one-click themed portfolios, shown right after
+    # Step 1's manual builder and BEFORE the "Calculate my AI %" button, as a
+    # faster alternative way to load a portfolio (not a replacement for the
+    # manual ticker/weight table above, which is untouched). Deliberately NOT
+    # gated behind "2 in unlocked_steps": a user should be able to browse and
+    # pick a themed mix before ever calculating, the same way they can already
+    # pick from the sidebar's "Quick presets" dropdown before calculating.
+    #
+    # What IS gated is the AI% number inside each card's donut hole (see
+    # `reveal` on render_portfolio_donut): pre-calculate, every card shows only
+    # its composition, not its number, so browsing sector cards can't spoil the
+    # "Calculate my AI %" button's own reveal. Once that button is pressed,
+    # revisiting this section (it stays in place, doesn't move or disappear)
+    # shows every card's real AI%, so the user can compare their chosen
+    # portfolio's headline number above against every sector at a glance --
+    # not just the one they picked.
+    # ============================================================================
+
+    reveal_sector_ai = 2 in st.session_state["unlocked_steps"]
+
+    # Always shown pre-Calculate (not just once the portfolio differs from the
+    # default) -- a big "?"-holed wheel that mirrors Step 1's table live, so
+    # there's always something visual to X-ray before the button is pressed, not
+    # just a table of numbers. Hidden once Step 2 unlocks: the "Portfolio at a
+    # glance" donut_box below (see the "Your allocation (donut) + Panel 1" section
+    # further down) takes over from that point, showing the SAME weights with the
+    # real number revealed -- keeping both on screen at once would just duplicate
+    # the same wheel twice.
+    if 2 not in st.session_state["unlocked_steps"]:
+        # ----------------------------------------------------------------------------
+        # Live preview of the user's own (not-yet-calculated) portfolio -- same "?"
+        # placeholder donut style as the sector cards just below, so both speak one
+        # visual language: composition now, number after Calculate. Reads
+        # weights_pct_map directly, so it updates on every edit to Step 1's table
+        # above.
+        #
+        # The "Normalize to 100%" button reuses the exact same proportional-scaling
+        # math as Step 1's own "Normalize weights to 100%" button (which only ever
+        # appears in the weights-don't-sum-to-100 error state, which st.stop()s
+        # before reaching this point) -- same behavior, just also reachable here
+        # without having to first break your weights to see it.
+        # ----------------------------------------------------------------------------
+        st.markdown(
+            '<div class="section-label">YOUR ALLOCATION SO FAR</div>'
+            '<div class="section-title">Your current mix</div>',
+            unsafe_allow_html=True,
+        )
+        with st.container(border=True, key="your_mix_preview"):
+            preview_weights_frac = {t: w / 100.0 for t, w in weights_pct_map.items()}
+            preview_donut = render_portfolio_donut(
+                preview_weights_frac, 0.0,
+                reveal=False,
+            )
+            st.plotly_chart(preview_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
+                             key="your_mix_chart")
+            st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in weights_pct_map.items()))
+
+        st.markdown('<div style="margin-top:10px;"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">MORE OPTIONS</div>', unsafe_allow_html=True)
+    # Collapsed by default -- this is a secondary path (the manual table above is
+    # the primary one), so it stays out of the way until the user actually wants
+    # to browse sector mixes, instead of permanently occupying page space.
+    with st.expander("Or start from a popular portfolio", expanded=False, key="sector_gallery_expander"):
+        if reveal_sector_ai:
+            st.caption(
+                "Pick a sector mix to swap it into the builder above and re-run the numbers. Now that "
+                "you've calculated your own AI %, its number is shown below too, so you can compare your "
+                "portfolio against it at a glance."
+            )
+            st.caption(
+                "AI% here is a sensitivity measure (regression beta against the AI basket), not a share "
+                "of holdings -- it can go over 100% if a mix is more volatile than the basket itself."
+            )
+        else:
+            st.caption(
+                "Not sure what to build? Pick a themed sector mix below to load it into the builder above, "
+                "then press “Calculate my AI %” to reveal how exposed it is -- yours and this "
+                "mix's number stay hidden until then."
+            )
+        available_sector_presets = {
+            name: preset for name, preset in SECTOR_PRESETS.items()
+            if all(t in universe for t in preset["tickers"])
+        }
+        preset_names = list(available_sector_presets.keys())
+
+        # Every option's AI% up front (not just the one currently picked) so the
+        # dropdown list itself shows each entry's number once revealed -- same
+        # reveal_sector_ai gate as the donut below, so nothing here shows before
+        # Calculate is pressed.
+        preset_beta_by_name = {}
+        if reveal_sector_ai:
+            for _name, _preset in available_sector_presets.items():
+                _preset_frac = {t: w / 100.0 for t, w in _preset["weights"].items()}
+                _preset_log = fl.to_log_returns(fl.build_portfolio_simple_returns(simple_returns, _preset_frac))
+                preset_beta_by_name[_name] = fl.single_factor_regress(_preset_log, ai_log)["beta"] * 100
+            del _name, _preset, _preset_frac, _preset_log
+
+        def _format_sector_option(name: str) -> str:
+            tag = available_sector_presets[name]["tag"]
+            if name in preset_beta_by_name:
+                return f"{name} ({tag}) -- {preset_beta_by_name[name]:.0f}% AI"
+            return f"{name} ({tag})"
+
+        sector_pick = st.selectbox(
+            "Pick a themed sector mix",
+            options=preset_names,
+            format_func=_format_sector_option,
+            index=preset_names.index("Classic Investor") if "Classic Investor" in preset_names else 0,
+            key="sector_preset_pick",
             label_visibility="collapsed",
         )
-    with weight_col:
-        ticker_add_weight = st.number_input(
-            "Weight % to add at", min_value=0.0, max_value=100.0, step=1.0, value=0.0,
-            key="ticker_add_weight", label_visibility="collapsed",
+        preset = available_sector_presets[sector_pick]
+        preset_weights_pct = preset["weights"]
+        is_active = (
+            set(preset_weights_pct.keys()) == set(weights_pct_map.keys())
+            and all(abs(preset_weights_pct[t] - weights_pct_map.get(t, -1.0)) < 0.01
+                    for t in preset_weights_pct)
         )
-    with btn_col:
-        if st.button("+ Add", key="ticker_add_btn", width="stretch", disabled=ticker_to_add is None):
-            st.session_state["selected_tickers"] = st.session_state["selected_tickers"] + [ticker_to_add]
-            if ticker_add_weight > 0:
-                st.session_state["weight_map"] = {
-                    **st.session_state["weight_map"], ticker_to_add: ticker_add_weight,
-                }
-                st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
-            st.rerun()
-
-    selected = st.session_state["selected_tickers"]
-    if selected:
-        chip_row_cols = st.columns([5, 1.3])
-        with chip_row_cols[0]:
-            st.caption("In your portfolio -- click to remove:")
-        with chip_row_cols[1]:
-            if st.button("Remove all", key="remove_all_tickers", width="stretch"):
-                st.session_state["selected_tickers"] = []
-                st.session_state["weight_map"] = {}
+        preset_weights_frac = {t: w / 100.0 for t, w in preset_weights_pct.items()}
+        preset_beta_pct = preset_beta_by_name.get(sector_pick, 0.0)
+        donut_col, info_col = st.columns([1, 1])
+        with donut_col:
+            mini_donut = render_portfolio_donut(
+                preset_weights_frac, preset_beta_pct,
+                height=170, number_font_size=16, label_font_size=8, margin=22,
+                reveal=reveal_sector_ai,
+            )
+            st.plotly_chart(mini_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
+                             key="sector_pick_chart")
+        with info_col:
+            st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in preset_weights_pct.items()))
+            if st.button(
+                "Currently active" if is_active else "Try this mix →",
+                key="sector_pick_btn", disabled=is_active, width="stretch",
+            ):
+                # See the "pending_sector_preset" comment near the top of the
+                # script for why this can't write selected_tickers/weight_map
+                # directly from here.
+                st.session_state["_pending_sector_preset"] = dict(preset_weights_pct)
                 st.rerun()
-        remove_cols = st.columns(min(len(selected), 7))
-        for i, t in enumerate(selected):
-            with remove_cols[i % len(remove_cols)]:
-                if st.button(f"{t} ✕", key=f"remove_chip_{t}", width="stretch"):
-                    st.session_state["selected_tickers"] = [x for x in selected if x != t]
-                    st.rerun()
-
-    weights_pct_map = {}
-    if selected:
-        version = st.session_state["weight_map_version"]
-        header_cols = st.columns([2, 3, 0.6])
-        with header_cols[0]:
-            st.markdown(f'<div style="color:{TEXT_MUTED}; font-size:0.78rem;">TICKER</div>',
-                        unsafe_allow_html=True)
-        with header_cols[1]:
-            st.markdown(f'<div style="color:{TEXT_MUTED}; font-size:0.78rem;">WEIGHT %</div>',
-                        unsafe_allow_html=True)
-        row_removed = False
-        for t in selected:
-            row_cols = st.columns([2, 3, 0.6])
-            with row_cols[0]:
-                st.markdown(f'<div style="padding-top:10px; font-weight:600;">{t}</div>',
-                            unsafe_allow_html=True)
-            with row_cols[1]:
-                # Keyed on weight_map_version, not just the ticker, so a bulk
-                # replace of weight_map (preset/sector pick/shared
-                # link/Normalize -- see the version-bump comment above) gives
-                # this box a fresh widget identity and re-reads `value=`
-                # instead of Streamlit preserving whatever was last typed here.
-                weights_pct_map[t] = st.number_input(
-                    f"{t} weight", min_value=0.0, max_value=100.0, step=5.0,
-                    value=float(st.session_state["weight_map"].get(t, 0.0)),
-                    key=f"weight_input_{t}_v{version}", label_visibility="collapsed",
-                )
-            with row_cols[2]:
-                # Same remove action as the chip strip above, surfaced again
-                # right on the row being edited -- so removing a stock doesn't
-                # require scrolling back up to its chip once you're down here
-                # adjusting weights.
-                if st.button("✕", key=f"remove_row_{t}", width="stretch"):
-                    st.session_state["selected_tickers"] = [x for x in selected if x != t]
-                    st.session_state["weight_map"].pop(t, None)
-                    row_removed = True
-        if row_removed:
+        st.caption(
+            "Each sector mix is an equal-weighted, illustrative sample from this app's supported "
+            "universe, not investment advice or a real sector fund's methodology. Same fixed-weight, "
+            "daily-rebalanced assumption as the rest of this tool."
+        )
+    if 2 not in st.session_state["unlocked_steps"]:
+        st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
+        if st.button("Calculate my AI % →", key="calc_ai_pct", type="primary"):
+            run_gate_animation(AI_PCT_GATE_STAGES)
+            newly_ai = {n for n in (2, 3, 4) if unlock_step(n)}
+            if newly_ai:
+                st.session_state["_flash_animate"] = newly_ai
+            st.session_state["active_step"] = 2
             st.rerun()
-        st.session_state["weight_map"] = dict(weights_pct_map)
-        st.caption(
-            "Type a weight or use the −/+ steppers, then press Enter (or click away) to apply it. "
-            "New tickers start at 0%, so update the weight yourself, or hit Normalize below once "
-            "your mix adds up to 100%."
-        )
-
-    weights, errors, warnings_ = validate_weights(weights_pct_map)
-
-    for w in warnings_:
-        st.info(w)
-
-    if errors:
-        for e in errors:
-            st.error(e)
-        total = sum(weights_pct_map.values())
-        if total > 0:
-            if st.button("Normalize weights to 100%"):
-                st.session_state["weight_map"] = {t: w / total * 100.0 for t, w in weights_pct_map.items()}
-                st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
-                st.rerun()
-        st.stop()
-
-# ============================================================================
-# Cascade unlock -- reaching here means the weights above validated (the
-# errors branch just above already st.stop()'d otherwise), so every
-# downstream step in this list has what it needs and they unlock together.
-# See the "Progressive step-reveal state" comment near the top of the script
-# for why this cascades instead of gating on N separate clicks. This is a
-# no-op after the first time a valid portfolio exists in this session
-# (unlock_step() returns False for anything already unlocked), so re-editing
-# Step 1's weights later doesn't re-trigger it or re-lock anything.
-#
-# Steps 2, 3, and 4 (donut/headline AI%, the realized-return panel, and the
-# comparison bar that plots the same beta_pct) and steps 5 and 6 (repricing
-# scenario bars + tradeoff scatter) are deliberately NOT in this list -- each
-# group is gated behind its own explicit button + progress animation instead
-# (see the "Calculate my AI %" gate right after the Computation block, and
-# the "Run repricing simulation" gate right before Step 5's header). Step 3
-# used to be here (auto-unlocked) -- moved out because that let "Your
-# portfolio, the last year" render before the AI%-calculation button was
-# ever clicked; see that section's own comment. Bonus (7) is unrelated to
-# either gate and stays automatic.
-# ============================================================================
-CASCADE_STEPS = (7,)
-newly_cascade = {n for n in CASCADE_STEPS if unlock_step(n)}
-if newly_cascade:
-    st.session_state["_flash_animate"] = newly_cascade
-    st.rerun()
-
-# ============================================================================
-# Computation -- spinner covers exactly this block. The get_*/load_* calls are
-# @st.cache_data, so this is only slow on a cold cache (first load, or a DB
-# change); on every later rerun of an already-computed portfolio they return
-# instantly and the spinner flashes too briefly to notice, by design -- no
-# special "is this cached?" branching needed, that's what st.cache_data gives us.
-# ============================================================================
-
-with st.spinner("X-raying your portfolio…"):
-    simple_returns = get_simple_returns(prices)
-    ai_log = get_ai_log(prices)
-    rest_factor_252, ai_756, rest_factor_756 = get_rest_factors(prices)
-    ai_shock_no_bubble, rest_shock_no_bubble = get_no_bubble_shocks(prices)
-    m2_shocks = get_m2_shocks()
-    m1_table = get_m1_table()
-    spy_rolling = get_spy_rolling_beta(prices)
-
-    user_simple = fl.build_portfolio_simple_returns(simple_returns, weights)
-    user_log = fl.to_log_returns(user_simple)
-
-    overlap = fl.overlapping_obs_count(user_log, ai_log)
-    if overlap < fl.MIN_REGRESSION_OBS:
-        st.error(
-            f"Only {overlap} overlapping trading day(s) between these tickers and the AI basket. "
-            f"That's not enough to compute a beta, so try a different mix."
-        )
-        st.stop()
-
-    single = fl.single_factor_regress(user_log, ai_log)
-    two_factor = fl.two_factor_regress(user_log, ai_log, rest_factor_252)
-
-    # Cap-weighted sensitivity check for the "Why these 8 tickers?" expander only
-    # -- see get_ai_log_capweighted's own comment for why this doesn't touch the
-    # headline number or anything downstream of it.
-    ai_log_capweighted = get_ai_log_capweighted(prices)
-    beta_pct_capweighted = fl.single_factor_regress(user_log, ai_log_capweighted)["beta"] * 100
-
-    n_obs = single["n_obs"]
-
-    # Realized last-year return (Step 3 panel) -- SIMPLE-return compounding, indexed
-    # to 100 at the window's start, same convention as m2_replay.py's crash-replay
-    # charts. Aligned against SPY over the SAME trailing dates the user's own
-    # portfolio has data for, so a short-history holding doesn't get compared
-    # against a SPY window it didn't actually overlap with.
-    user_indexed, spy_indexed, realized_n_days = fl.indexed_cumulative_returns(
-        user_simple, simple_returns["SPY"], fl.WINDOW
-    )
-    user_return_pct = user_indexed.iloc[-1] - 100
-    spy_return_pct = spy_indexed.iloc[-1] - 100
-
-    beta_pct = single["beta"] * 100
-    r_squared = single["r_squared"]
-
-    # direct weight: see factor_lib.compute_direct_weight_pct for the resolution rules
-    # (AI-basket member / named reference portfolio / known-zero bond-commodity fund /
-    # genuinely unresolvable). Pulled out of this file so it's unit-testable without
-    # Streamlit -- see tests/test_factor_lib.py.
-    user_direct_pct, unresolvable = fl.compute_direct_weight_pct(weights)
-
-    proj_no_bubble = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], ai_shock_no_bubble, rest_shock_no_bubble) * 100
-    proj_2022 = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["2022_ai_shock"], m2_shocks["2022_rest_shock"]) * 100
-    proj_2008 = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["gfc_ai_shock"], m2_shocks["gfc_rest_shock"]) * 100
-    proj_dotcom = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"]) * 100
-
-    # Rolling beta -- computed exactly once here, reused by the Step 6 bonus
-    # expander further down (see its own comment). Not wrapped in
-    # @st.cache_data since it depends on the user's arbitrary weights dict;
-    # it's a cheap vectorized computation either way.
-    user_rolling_full = fl.rolling_beta(user_log, ai_log, fl.WINDOW)
-
-# ============================================================================
-# Sector preset gallery -- one-click themed portfolios, shown right after
-# Step 1's manual builder and BEFORE the "Calculate my AI %" button, as a
-# faster alternative way to load a portfolio (not a replacement for the
-# manual ticker/weight table above, which is untouched). Deliberately NOT
-# gated behind "2 in unlocked_steps": a user should be able to browse and
-# pick a themed mix before ever calculating, the same way they can already
-# pick from the sidebar's "Quick presets" dropdown before calculating.
-#
-# What IS gated is the AI% number inside each card's donut hole (see
-# `reveal` on render_portfolio_donut): pre-calculate, every card shows only
-# its composition, not its number, so browsing sector cards can't spoil the
-# "Calculate my AI %" button's own reveal. Once that button is pressed,
-# revisiting this section (it stays in place, doesn't move or disappear)
-# shows every card's real AI%, so the user can compare their chosen
-# portfolio's headline number above against every sector at a glance --
-# not just the one they picked.
-# ============================================================================
-
-reveal_sector_ai = 2 in st.session_state["unlocked_steps"]
-
-# Always shown pre-Calculate (not just once the portfolio differs from the
-# default) -- a big "?"-holed wheel that mirrors Step 1's table live, so
-# there's always something visual to X-ray before the button is pressed, not
-# just a table of numbers. Hidden once Step 2 unlocks: the "Portfolio at a
-# glance" donut_box below (see the "Your allocation (donut) + Panel 1" section
-# further down) takes over from that point, showing the SAME weights with the
-# real number revealed -- keeping both on screen at once would just duplicate
-# the same wheel twice.
-if 2 not in st.session_state["unlocked_steps"]:
-    # ----------------------------------------------------------------------------
-    # Live preview of the user's own (not-yet-calculated) portfolio -- same "?"
-    # placeholder donut style as the sector cards just below, so both speak one
-    # visual language: composition now, number after Calculate. Reads
-    # weights_pct_map directly, so it updates on every edit to Step 1's table
-    # above.
-    #
-    # The "Normalize to 100%" button reuses the exact same proportional-scaling
-    # math as Step 1's own "Normalize weights to 100%" button (which only ever
-    # appears in the weights-don't-sum-to-100 error state, which st.stop()s
-    # before reaching this point) -- same behavior, just also reachable here
-    # without having to first break your weights to see it.
-    # ----------------------------------------------------------------------------
-    st.markdown(
-        '<div class="section-label">YOUR ALLOCATION SO FAR</div>'
-        '<div class="section-title">Your current mix</div>',
-        unsafe_allow_html=True,
-    )
-    with st.container(border=True, key="your_mix_preview"):
-        preview_weights_frac = {t: w / 100.0 for t, w in weights_pct_map.items()}
-        preview_donut = render_portfolio_donut(
-            preview_weights_frac, 0.0,
-            reveal=False,
-        )
-        st.plotly_chart(preview_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
-                         key="your_mix_chart")
-        st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in weights_pct_map.items()))
-
-    st.markdown('<div style="margin-top:10px;"></div>', unsafe_allow_html=True)
-st.markdown('<div class="section-label">MORE OPTIONS</div>', unsafe_allow_html=True)
-# Collapsed by default -- this is a secondary path (the manual table above is
-# the primary one), so it stays out of the way until the user actually wants
-# to browse sector mixes, instead of permanently occupying page space.
-with st.expander("Or start from a popular portfolio", expanded=False, key="sector_gallery_expander"):
-    if reveal_sector_ai:
-        st.caption(
-            "Pick a sector mix to swap it into the builder above and re-run the numbers. Now that "
-            "you've calculated your own AI %, its number is shown below too, so you can compare your "
-            "portfolio against it at a glance."
-        )
-        st.caption(
-            "AI% here is a sensitivity measure (regression beta against the AI basket), not a share "
-            "of holdings -- it can go over 100% if a mix is more volatile than the basket itself."
-        )
-    else:
-        st.caption(
-            "Not sure what to build? Pick a themed sector mix below to load it into the builder above, "
-            "then press “Calculate my AI %” to reveal how exposed it is -- yours and this "
-            "mix's number stay hidden until then."
-        )
-    available_sector_presets = {
-        name: preset for name, preset in SECTOR_PRESETS.items()
-        if all(t in universe for t in preset["tickers"])
-    }
-    preset_names = list(available_sector_presets.keys())
-
-    # Every option's AI% up front (not just the one currently picked) so the
-    # dropdown list itself shows each entry's number once revealed -- same
-    # reveal_sector_ai gate as the donut below, so nothing here shows before
-    # Calculate is pressed.
-    preset_beta_by_name = {}
-    if reveal_sector_ai:
-        for _name, _preset in available_sector_presets.items():
-            _preset_frac = {t: w / 100.0 for t, w in _preset["weights"].items()}
-            _preset_log = fl.to_log_returns(fl.build_portfolio_simple_returns(simple_returns, _preset_frac))
-            preset_beta_by_name[_name] = fl.single_factor_regress(_preset_log, ai_log)["beta"] * 100
-        del _name, _preset, _preset_frac, _preset_log
-
-    def _format_sector_option(name: str) -> str:
-        tag = available_sector_presets[name]["tag"]
-        if name in preset_beta_by_name:
-            return f"{name} ({tag}) -- {preset_beta_by_name[name]:.0f}% AI"
-        return f"{name} ({tag})"
-
-    sector_pick = st.selectbox(
-        "Pick a themed sector mix",
-        options=preset_names,
-        format_func=_format_sector_option,
-        index=preset_names.index("Classic Investor") if "Classic Investor" in preset_names else 0,
-        key="sector_preset_pick",
-        label_visibility="collapsed",
-    )
-    preset = available_sector_presets[sector_pick]
-    preset_weights_pct = preset["weights"]
-    is_active = (
-        set(preset_weights_pct.keys()) == set(weights_pct_map.keys())
-        and all(abs(preset_weights_pct[t] - weights_pct_map.get(t, -1.0)) < 0.01
-                for t in preset_weights_pct)
-    )
-    preset_weights_frac = {t: w / 100.0 for t, w in preset_weights_pct.items()}
-    preset_beta_pct = preset_beta_by_name.get(sector_pick, 0.0)
-    donut_col, info_col = st.columns([1, 1])
-    with donut_col:
-        mini_donut = render_portfolio_donut(
-            preset_weights_frac, preset_beta_pct,
-            height=170, number_font_size=16, label_font_size=8, margin=22,
-            reveal=reveal_sector_ai,
-        )
-        st.plotly_chart(mini_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
-                         key="sector_pick_chart")
-    with info_col:
-        st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in preset_weights_pct.items()))
-        if st.button(
-            "Currently active" if is_active else "Try this mix →",
-            key="sector_pick_btn", disabled=is_active, width="stretch",
-        ):
-            # See the "pending_sector_preset" comment near the top of the
-            # script for why this can't write selected_tickers/weight_map
-            # directly from here.
-            st.session_state["_pending_sector_preset"] = dict(preset_weights_pct)
-            st.rerun()
-    st.caption(
-        "Each sector mix is an equal-weighted, illustrative sample from this app's supported "
-        "universe, not investment advice or a real sector fund's methodology. Same fixed-weight, "
-        "daily-rebalanced assumption as the rest of this tool."
-    )
 
 # ============================================================================
 # Your allocation (donut) + Panel 1: Headline (hero card) -- both gated behind
@@ -2035,15 +2129,7 @@ with st.expander("Or start from a popular portfolio", expanded=False, key="secto
 # further down -- see each section's own comment for why.
 # ============================================================================
 
-step_anchor(2)  # shared by the donut and Step 2 -- both unlock on the same click
-if 2 not in st.session_state["unlocked_steps"]:
-    if st.button("Calculate my AI % →", key="calc_ai_pct", type="primary"):
-        run_gate_animation(AI_PCT_GATE_STAGES)
-        newly_ai = {n for n in (2, 3, 4) if unlock_step(n)}
-        if newly_ai:
-            st.session_state["_flash_animate"] = newly_ai
-        st.rerun()
-else:
+with st.container(key="step_page_2", height=STEP_PAGE_HEIGHT):
     st.markdown(
         '<div class="section-label">YOUR ALLOCATION</div>'
         '<div class="section-title">Portfolio at a glance</div>',
@@ -2212,7 +2298,7 @@ else:
 # literally the same condition Step 4 already uses, not a new flag.
 # ============================================================================
 
-if 4 in st.session_state["unlocked_steps"]:
+with st.container(key="step_page_3", height=STEP_PAGE_HEIGHT):
     step_anchor(3)
     section_header("3", "Your portfolio, the last year")
     animate_container("step3_box", 3, animate_now)
@@ -2245,7 +2331,7 @@ if 4 in st.session_state["unlocked_steps"]:
 # the one before the donut already covers it) until that same flag flips.
 # ============================================================================
 
-if 4 in st.session_state["unlocked_steps"]:
+with st.container(key="step_page_4", height=STEP_PAGE_HEIGHT):
     step_anchor(4)
     section_header("4", "Where you sit among the standard portfolios")
     animate_container("step4_box", 4, animate_now)
@@ -2295,6 +2381,15 @@ if 4 in st.session_state["unlocked_steps"]:
                     f'<div style="text-align:center; font-weight:700; color:{TEXT_PRIMARY};">{sbs_name}</div>',
                     unsafe_allow_html=True,
                 )
+    if 5 not in st.session_state["unlocked_steps"]:
+        st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
+        if st.button("Run repricing simulation on your selected portfolio →", key="run_repricing_sim", type="primary"):
+            run_gate_animation(REPRICING_SIM_STAGES)
+            newly_sim = {n for n in (5, 6) if unlock_step(n)}
+            if newly_sim:
+                st.session_state["_flash_animate"] = newly_sim
+            st.session_state["active_step"] = 5
+            st.rerun()
 
 # ============================================================================
 # Panel 4: Scenario bars, and Panel 5: the tradeoff scatter -- both gated
@@ -2313,158 +2408,151 @@ if 4 in st.session_state["unlocked_steps"]:
 # before Step 2/3/4 had ever been revealed.
 # ============================================================================
 
-if 4 in st.session_state["unlocked_steps"]:
-    step_anchor(5)
-    if 5 not in st.session_state["unlocked_steps"]:
-        if st.button("Run repricing simulation on your selected portfolio →", key="run_repricing_sim", type="primary"):
-            run_gate_animation(REPRICING_SIM_STAGES)
-            newly_sim = {n for n in (5, 6) if unlock_step(n)}
-            if newly_sim:
-                st.session_state["_flash_animate"] = newly_sim
-            st.rerun()
-    else:
-        section_header("5", "If a repricing happened")
-        animate_container("step5_box", 5, animate_now)
-        with st.container(border=True, key="step5_box"):
-            m3_table = get_m3_table()
-            is_pure_spy = set(weights.keys()) == {"SPY"}
-            spy_crash_refs = None if is_pure_spy else {
-                "2022": m3_table.loc["SPY", "proj_2022_style_pct"],
-                "2008": m3_table.loc["SPY", "proj_2008_style_pct"],
-                "dotcom": m3_table.loc["SPY", "proj_dotcom_style_pct"],
-            }
+with st.container(key="step_page_5", height=STEP_PAGE_HEIGHT):
+    section_header("5", "If a repricing happened")
+    animate_container("step5_box", 5, animate_now)
+    with st.container(border=True, key="step5_box"):
+        m3_table = get_m3_table()
+        is_pure_spy = set(weights.keys()) == {"SPY"}
+        spy_crash_refs = None if is_pure_spy else {
+            "2022": m3_table.loc["SPY", "proj_2022_style_pct"],
+            "2008": m3_table.loc["SPY", "proj_2008_style_pct"],
+            "dotcom": m3_table.loc["SPY", "proj_dotcom_style_pct"],
+        }
 
-            fig3 = render_scenario_chart(proj_no_bubble, proj_2022, proj_2008, proj_dotcom, spy_crash_refs)
-            st.plotly_chart(fig3, theme=None, width="stretch", config=PLOTLY_CONFIG)
-            st.caption(
-                "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "
-                "drift term. A projection, not a forecast. See LIMITATIONS.md."
-            )
-            st.caption(
-                "This app uses three historical analogies: 2022 (a smaller, rate-driven "
-                "growth-stock repricing), 2008 (a systemic crash where the \"rest of market\" "
-                "fell about as hard as the epicenter, the weakest analogy of the three since "
-                "tech wasn't what 2008 was about), and dot-com 2000. Dot-com gets the emphasis "
-                "elsewhere in this app (the disclaimer above, Step 6's chart) because it's the "
-                "one true **concentration** crash on record, with the market's top holdings "
-                "cracking under their own weight the same way Step 0's chart shows happening "
-                "again today. 2022 and 2008 are real data points here too, just weaker "
-                "structural matches to what this app measures."
-            )
+        fig3 = render_scenario_chart(proj_no_bubble, proj_2022, proj_2008, proj_dotcom, spy_crash_refs)
+        st.plotly_chart(fig3, theme=None, width="stretch", config=PLOTLY_CONFIG)
+        st.caption(
+            "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "
+            "drift term. A projection, not a forecast. See LIMITATIONS.md."
+        )
+        st.caption(
+            "This app uses three historical analogies: 2022 (a smaller, rate-driven "
+            "growth-stock repricing), 2008 (a systemic crash where the \"rest of market\" "
+            "fell about as hard as the epicenter, the weakest analogy of the three since "
+            "tech wasn't what 2008 was about), and dot-com 2000. Dot-com gets the emphasis "
+            "elsewhere in this app (the disclaimer above, Step 6's chart) because it's the "
+            "one true **concentration** crash on record, with the market's top holdings "
+            "cracking under their own weight the same way Step 0's chart shows happening "
+            "again today. 2022 and 2008 are real data points here too, just weaker "
+            "structural matches to what this app measures."
+        )
 
-        step_anchor(6)
-        section_header("6", "The menu: upside kept vs. downside risked")
-        animate_container("step6_box", 6, animate_now)
-        with st.container(border=True, key="step6_box"):
-            m3_reference = {
-                p: (m3_table.loc[p, "proj_dotcom_style_pct"], m3_table.loc[p, "proj_no_bubble_pct"])
-                for p in REFERENCE_PORTFOLIOS
-            }
+with st.container(key="step_page_6", height=STEP_PAGE_HEIGHT):
+    step_anchor(6)
+    section_header("6", "The menu: upside kept vs. downside risked")
+    animate_container("step6_box", 6, animate_now)
+    with st.container(border=True, key="step6_box"):
+        m3_reference = {
+            p: (m3_table.loc[p, "proj_dotcom_style_pct"], m3_table.loc[p, "proj_no_bubble_pct"])
+            for p in REFERENCE_PORTFOLIOS
+        }
 
-            fig4 = render_tradeoff_chart(m3_reference, proj_dotcom, proj_no_bubble)
-            st.plotly_chart(fig4, theme=None, width="stretch", config=PLOTLY_CONFIG)
+        fig4 = render_tradeoff_chart(m3_reference, proj_dotcom, proj_no_bubble)
+        st.plotly_chart(fig4, theme=None, width="stretch", config=PLOTLY_CONFIG)
 
-            st.caption(
-                "This chart plots the dot-com scenario rather than 2022 or 2008, because it's "
-                "the closest structural match to a concentration crash (see Step 5's caption). "
-                "The other two scenarios' numbers are still in the table above, just not drawn "
-                "as a second axis here."
-            )
-            st.markdown(
-                "*This app doesn't recommend a weight. It just shows the tradeoff your portfolio "
-                "implies, same stance as the rest of this project.*"
-            )
+        st.caption(
+            "This chart plots the dot-com scenario rather than 2022 or 2008, because it's "
+            "the closest structural match to a concentration crash (see Step 5's caption). "
+            "The other two scenarios' numbers are still in the table above, just not drawn "
+            "as a second axis here."
+        )
+        st.markdown(
+            "*This app doesn't recommend a weight. It just shows the tradeoff your portfolio "
+            "implies, same stance as the rest of this project.*"
+        )
 
-        # --------------------------------------------------------------------
-        # Other portfolios' repricing -- same dropdown pattern as Step 1's
-        # "Or start from a popular portfolio" (mirrored key names below get
-        # matching CSS), but run through the SAME projection math as Step 5
-        # above (fl.two_factor_regress + fl.project_scenario) for a small
-        # fixed set of other portfolios instead of the user's own. Reuses
-        # simple_returns/ai_log/rest_factor_252/the shock values already
-        # computed in the Computation block earlier in the script -- nothing
-        # new pulled or recomputed globally, just re-run per preset. Only
-        # available inside this same `else` (i.e. only once the repricing
-        # sim has actually been run), consistent with everything else here.
-        # --------------------------------------------------------------------
-        st.markdown('<div class="section-label">MORE OPTIONS</div>', unsafe_allow_html=True)
-        with st.expander("Other portfolios' repricing", expanded=False, key="repricing_gallery_expander"):
-            st.caption(
-                "Same projection math as Step 5 above, run on a few other portfolios from this "
-                "app's sector picker, so you can see how their repricing exposure compares to yours."
+    # --------------------------------------------------------------------
+    # Other portfolios' repricing -- same dropdown pattern as Step 1's
+    # "Or start from a popular portfolio" (mirrored key names below get
+    # matching CSS), but run through the SAME projection math as Step 5
+    # above (fl.two_factor_regress + fl.project_scenario) for a small
+    # fixed set of other portfolios instead of the user's own. Reuses
+    # simple_returns/ai_log/rest_factor_252/the shock values already
+    # computed in the Computation block earlier in the script -- nothing
+    # new pulled or recomputed globally, just re-run per preset. Only
+    # available inside this same `else` (i.e. only once the repricing
+    # sim has actually been run), consistent with everything else here.
+    # --------------------------------------------------------------------
+    st.markdown('<div class="section-label">MORE OPTIONS</div>', unsafe_allow_html=True)
+    with st.expander("Other portfolios' repricing", expanded=False, key="repricing_gallery_expander"):
+        st.caption(
+            "Same projection math as Step 5 above, run on a few other portfolios from this "
+            "app's sector picker, so you can see how their repricing exposure compares to yours."
+        )
+        repricing_preset_names = [
+            name for name in ("Semiconductors", "Healthcare Core", "Classic Investor", "AI Basket")
+            if name in SECTOR_PRESETS and all(t in universe for t in SECTOR_PRESETS[name]["tickers"])
+        ]
+        if repricing_preset_names:
+            repricing_pick = st.selectbox(
+                "Pick a portfolio",
+                options=repricing_preset_names,
+                format_func=lambda name: f"{name} ({SECTOR_PRESETS[name]['tag']})",
+                key="repricing_preset_pick",
+                label_visibility="collapsed",
             )
-            repricing_preset_names = [
-                name for name in ("Semiconductors", "Healthcare Core", "Classic Investor", "AI Basket")
-                if name in SECTOR_PRESETS and all(t in universe for t in SECTOR_PRESETS[name]["tickers"])
-            ]
-            if repricing_preset_names:
-                repricing_pick = st.selectbox(
-                    "Pick a portfolio",
-                    options=repricing_preset_names,
-                    format_func=lambda name: f"{name} ({SECTOR_PRESETS[name]['tag']})",
-                    key="repricing_preset_pick",
-                    label_visibility="collapsed",
-                )
-                repricing_preset = SECTOR_PRESETS[repricing_pick]
-                repricing_frac = {t: w / 100.0 for t, w in repricing_preset["weights"].items()}
-                repricing_log = fl.to_log_returns(
-                    fl.build_portfolio_simple_returns(simple_returns, repricing_frac)
-                )
-                repricing_two_factor = fl.two_factor_regress(repricing_log, ai_log, rest_factor_252)
-                repricing_proj_no_bubble = fl.project_scenario(
-                    repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
-                    ai_shock_no_bubble, rest_shock_no_bubble,
-                ) * 100
-                repricing_proj_2022 = fl.project_scenario(
-                    repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
-                    m2_shocks["2022_ai_shock"], m2_shocks["2022_rest_shock"],
-                ) * 100
-                repricing_proj_2008 = fl.project_scenario(
-                    repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
-                    m2_shocks["gfc_ai_shock"], m2_shocks["gfc_rest_shock"],
-                ) * 100
-                repricing_proj_dotcom = fl.project_scenario(
-                    repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
-                    m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"],
-                ) * 100
-                fig_repricing = render_scenario_chart(
-                    repricing_proj_no_bubble, repricing_proj_2022, repricing_proj_2008,
-                    repricing_proj_dotcom, spy_crash_refs=None,
-                )
-                st.plotly_chart(fig_repricing, theme=None, width="stretch", config=PLOTLY_CONFIG,
-                                 key="repricing_preset_chart")
+            repricing_preset = SECTOR_PRESETS[repricing_pick]
+            repricing_frac = {t: w / 100.0 for t, w in repricing_preset["weights"].items()}
+            repricing_log = fl.to_log_returns(
+                fl.build_portfolio_simple_returns(simple_returns, repricing_frac)
+            )
+            repricing_two_factor = fl.two_factor_regress(repricing_log, ai_log, rest_factor_252)
+            repricing_proj_no_bubble = fl.project_scenario(
+                repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
+                ai_shock_no_bubble, rest_shock_no_bubble,
+            ) * 100
+            repricing_proj_2022 = fl.project_scenario(
+                repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
+                m2_shocks["2022_ai_shock"], m2_shocks["2022_rest_shock"],
+            ) * 100
+            repricing_proj_2008 = fl.project_scenario(
+                repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
+                m2_shocks["gfc_ai_shock"], m2_shocks["gfc_rest_shock"],
+            ) * 100
+            repricing_proj_dotcom = fl.project_scenario(
+                repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
+                m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"],
+            ) * 100
+            fig_repricing = render_scenario_chart(
+                repricing_proj_no_bubble, repricing_proj_2022, repricing_proj_2008,
+                repricing_proj_dotcom, spy_crash_refs=None,
+            )
+            st.plotly_chart(fig_repricing, theme=None, width="stretch", config=PLOTLY_CONFIG,
+                             key="repricing_preset_chart")
 
 # ============================================================================
 # Bonus panel: rolling beta through time
 # ============================================================================
 
-step_anchor(7)
-animate_container("bonus_box", 7, animate_now)
-with st.expander("Bonus: When did your portfolio become an AI fund? (rolling beta through time)", key="bonus_box"):
-    # Reuses user_rolling_full/spy_rolling computed once in the Computation
-    # block above -- not recomputed here. This is the only place that series
-    # is rendered now that the masthead's sparkline preview is gone (see the
-    # comment above the masthead's st.markdown calls).
-    if user_rolling_full.empty:
-        st.warning("Not enough history for this portfolio to compute a rolling beta series.")
-    else:
-        fig5 = render_rolling_beta_chart(user_rolling_full, spy_rolling, "Your portfolio")
-        st.plotly_chart(fig5, theme=None, width="stretch", config=PLOTLY_CONFIG)
-        st.caption("Series starts once all constituents (yours and the AI basket's) have 252 trading days of overlap.")
+with st.container(key="step_page_7", height=STEP_PAGE_HEIGHT):
+    step_anchor(7)
+    animate_container("bonus_box", 7, animate_now)
+    with st.expander("Bonus: When did your portfolio become an AI fund? (rolling beta through time)", key="bonus_box"):
+        # Reuses user_rolling_full/spy_rolling computed once in the Computation
+        # block above -- not recomputed here. This is the only place that series
+        # is rendered now that the masthead's sparkline preview is gone (see the
+        # comment above the masthead's st.markdown calls).
+        if user_rolling_full.empty:
+            st.warning("Not enough history for this portfolio to compute a rolling beta series.")
+        else:
+            fig5 = render_rolling_beta_chart(user_rolling_full, spy_rolling, "Your portfolio")
+            st.plotly_chart(fig5, theme=None, width="stretch", config=PLOTLY_CONFIG)
+            st.caption("Series starts once all constituents (yours and the AI basket's) have 252 trading days of overlap.")
 
-st.markdown("---")
-st.caption(
-    f"Demo universe: {len(universe)} tickers cached in data/prices.db. This assumes a fixed-weight, "
-    "daily-rebalanced portfolio, so it ignores real-world drift and trading costs. See LIMITATIONS.md "
-    "(Module 4) and outputs/m4_methodology.md for the full detail. Every Module 1 and Module 3 "
-    "limitation applies here too."
-)
+    st.markdown("---")
+    st.caption(
+        f"Demo universe: {len(universe)} tickers cached in data/prices.db. This assumes a fixed-weight, "
+        "daily-rebalanced portfolio, so it ignores real-world drift and trading costs. See LIMITATIONS.md "
+        "(Module 4) and outputs/m4_methodology.md for the full detail. Every Module 1 and Module 3 "
+        "limitation applies here too."
+    )
 
-# Persistent footer watermark -- see the .app-footer rule in the page's <style>
-# block for why it's plain text (no link) and deliberately quiet.
-st.markdown(
-    '<div class="app-footer">Built by Ilan Niraev, 2026 '
-    '(https://github.com/IlanNir664/hidden-ai-portfolio)</div>',
-    unsafe_allow_html=True,
-)
+    # Persistent footer watermark -- see the .app-footer rule in the page's <style>
+    # block for why it's plain text (no link) and deliberately quiet.
+    st.markdown(
+        '<div class="app-footer">Built by Ilan Niraev, 2026 '
+        '(https://github.com/IlanNir664/hidden-ai-portfolio)</div>',
+        unsafe_allow_html=True,
+    )
 
