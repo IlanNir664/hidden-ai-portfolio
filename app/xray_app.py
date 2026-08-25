@@ -111,14 +111,19 @@ BG_VIGNETTE_OPACITY = 0.20       # radial darkening toward the corners
 BG_DIAGONAL_LINE_OPACITY = 0.40  # the sharp lime edge itself, within the requested 35-45%
 BG_DIAGONAL_GLOW_OPACITY = 0.10  # the soft halo running parallel to it
 
-# Portfolio-donut palette: three groups (AI basket / no-equity-exposure bond &
-# commodity funds / other equity), each with a few shades of its own family so
-# two adjacent same-group segments still visually separate (e.g. NVDA next to
-# MSFT, or TLT next to GLD). Cycled per group in the order encountered, not
-# hashed, so shade assignment is stable and predictable within one render.
+# Portfolio-donut palette: three GROUPS carry meaning (AI basket / no-equity-
+# exposure bond & commodity funds / other equity -- see DONUT_GROUP_LABELS),
+# but only "ai" and "zero" need a single consistent hue, since those two are
+# flags the reader should recognize at a glance across every wheel in the app.
+# "other equity" carries no such flag -- it's just "everything else" -- so it
+# cycles through a full categorical rainbow (red/orange/teal/violet/pink/blue)
+# instead of shades of one hue, both for real per-ticker legibility on a
+# multi-holding wheel and so a page full of wheels doesn't read as monochrome
+# green. Cycled per group in the order encountered, not hashed, so shade
+# assignment is stable and predictable within one render.
 DONUT_LIME_SHADES = ["#39FF6E", "#28C455", "#8CFFB2", "#1C8F3D"]
 DONUT_GRAY_SHADES = ["#7C9585", "#526354", "#A6C2AE", "#3A4A3D"]
-DONUT_TEAL_SHADES = ["#2FB8D9", "#1F8AA8", "#7DDCEF", "#155F73"]
+DONUT_OTHER_SHADES = ["#E8574A", "#FF8A3D", "#2FB8D9", "#8B6FF5", "#F2569E", "#4A90E8"]
 DONUT_GROUP_LABELS = {
     "ai": "AI basket member",
     "zero": "No equity exposure (bond/Treasury/commodity)",
@@ -657,7 +662,7 @@ def render_portfolio_donut(weights: dict, beta_pct: float, height: int = 340,
     tickers = list(weights.keys())
     weight_pcts = [weights[t] * 100 for t in tickers]
 
-    shade_pools = {"ai": DONUT_LIME_SHADES, "zero": DONUT_GRAY_SHADES, "other": DONUT_TEAL_SHADES}
+    shade_pools = {"ai": DONUT_LIME_SHADES, "zero": DONUT_GRAY_SHADES, "other": DONUT_OTHER_SHADES}
     group_counters = {"ai": 0, "zero": 0, "other": 0}
     colors, hover_group_labels = [], []
     for ticker in tickers:
@@ -1175,41 +1180,42 @@ st.markdown(f"""
 # instead of reading as a small supporting preview. The same rolling-beta
 # series is still shown full-size in the "Bonus" expander near the end of the
 # page (see the Computation block's user_rolling_full, reused there).
-# Skeletal x-ray glyph -- pure decoration, see the .xray-glyph-wrap CSS
-# comment above for why it's a schematic fishbone ribcage rather than an
-# anatomically literal drawing. Inline SVG, no external asset request
-# (offline rule, same as every font choice in this file).
+# Portfolio-glyph x-ray -- pure decoration, see the .xray-glyph-wrap CSS
+# comment above for the scan-sweep mechanism. A quartered "portfolio dial"
+# (mini bar chart / trend arrow / percent / dollar coin, one per quadrant)
+# rather than a body -- keeps the scan motif but makes the thing being
+# scanned legibly "a portfolio", matching this app's own subject. Inline SVG,
+# no external asset request (offline rule, same as every font choice here).
 XRAY_GLYPH_SVG = """
 <div class="xray-glyph-wrap">
-<svg viewBox="0 0 140 220" xmlns="http://www.w3.org/2000/svg" stroke="#39FF6E" fill="none"
-     stroke-width="2.4" stroke-linecap="round">
-  <circle cx="70" cy="26" r="14" opacity="0.9" />
-  <circle cx="65" cy="24" r="1.4" fill="#39FF6E" stroke="none" />
-  <circle cx="75" cy="24" r="1.4" fill="#39FF6E" stroke="none" />
-  <path d="M62,34 Q70,40 78,34" opacity="0.7" />
-  <line x1="70" y1="40" x2="70" y2="125" opacity="0.9" />
-  <g opacity="0.75">
-    <line x1="70" y1="52" x2="48" y2="62" />
-    <line x1="70" y1="52" x2="92" y2="62" />
-    <line x1="70" y1="64" x2="46" y2="74" />
-    <line x1="70" y1="64" x2="94" y2="74" />
-    <line x1="70" y1="76" x2="46" y2="86" />
-    <line x1="70" y1="76" x2="94" y2="86" />
-    <line x1="70" y1="88" x2="48" y2="98" />
-    <line x1="70" y1="88" x2="92" y2="98" />
+<svg viewBox="0 0 140 160" xmlns="http://www.w3.org/2000/svg" stroke="#39FF6E" fill="none"
+     stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="70" cy="78" r="50" opacity="0.85" />
+  <line x1="70" y1="28" x2="70" y2="128" opacity="0.55" />
+  <line x1="20" y1="78" x2="120" y2="78" opacity="0.55" />
+
+  <g fill="#39FF6E" stroke="none" opacity="0.85">
+    <rect x="28" y="62" width="6" height="8" rx="1" />
+    <rect x="38" y="54" width="6" height="16" rx="1" />
+    <rect x="48" y="46" width="6" height="24" rx="1" />
+    <rect x="58" y="38" width="6" height="32" rx="1" />
   </g>
-  <path d="M70,125 L52,140 M70,125 L88,140" opacity="0.9" />
-  <path d="M46,54 L28,90 L24,118" opacity="0.6" />
-  <path d="M94,54 L112,90 L116,118" opacity="0.6" />
-  <circle cx="28" cy="90" r="2.2" fill="#39FF6E" stroke="none" opacity="0.6" />
-  <circle cx="112" cy="90" r="2.2" fill="#39FF6E" stroke="none" opacity="0.6" />
-  <path d="M52,140 L48,175 L44,206" opacity="0.9" />
-  <path d="M88,140 L92,175 L96,206" opacity="0.9" />
-  <circle cx="48" cy="175" r="2.4" fill="#39FF6E" stroke="none" opacity="0.85" />
-  <circle cx="92" cy="175" r="2.4" fill="#39FF6E" stroke="none" opacity="0.85" />
-  <g stroke="#3EE8FF" stroke-width="1.2" stroke-dasharray="3 6" opacity="0.35">
-    <line x1="14" y1="70" x2="126" y2="70" />
-    <line x1="14" y1="150" x2="126" y2="150" />
+
+  <path d="M78,70 L90,56 L100,60 L114,34" opacity="0.85" />
+  <path d="M104,34 L114,34 L114,44" opacity="0.85" />
+
+  <circle cx="34" cy="94" r="4.5" fill="#39FF6E" stroke="none" opacity="0.85" />
+  <circle cx="58" cy="118" r="4.5" fill="#39FF6E" stroke="none" opacity="0.85" />
+  <line x1="60" y1="90" x2="32" y2="122" opacity="0.85" />
+
+  <circle cx="96" cy="103" r="17" opacity="0.85" />
+  <line x1="96" y1="88" x2="96" y2="118" opacity="0.65" />
+  <path d="M103,94 C96,90 89,94 89,99 C89,104 103,102 103,107 C103,112 96,116 89,112"
+        opacity="0.85" stroke-width="2" />
+
+  <g stroke="#3EE8FF" stroke-width="1.2" stroke-dasharray="3 6" opacity="0.3">
+    <line x1="6" y1="50" x2="134" y2="50" />
+    <line x1="6" y1="106" x2="134" y2="106" />
   </g>
 </svg>
 </div>
@@ -1789,25 +1795,21 @@ with st.spinner("X-raying your portfolio…"):
 
 reveal_sector_ai = 2 in st.session_state["unlocked_steps"]
 
-# Only shows once the portfolio actually differs from the untouched
-# pre-loaded default -- either by editing Step 1's table directly or by
-# picking a popular portfolio below/in the sidebar. Otherwise this preview
-# would render on every fresh session before the user has made any choice
-# of their own, which just duplicates Step 1's table with nothing new to say.
-is_portfolio_touched = not (
-    set(weights_pct_map.keys()) == set(DEFAULT_PORTFOLIO.keys())
-    and all(abs(weights_pct_map[t] - DEFAULT_PORTFOLIO[t]) < 0.01 for t in DEFAULT_PORTFOLIO)
-)
-
-if is_portfolio_touched:
+# Always shown pre-Calculate (not just once the portfolio differs from the
+# default) -- a big "?"-holed wheel that mirrors Step 1's table live, so
+# there's always something visual to X-ray before the button is pressed, not
+# just a table of numbers. Hidden once Step 2 unlocks: the "Portfolio at a
+# glance" donut_box below (see the "Your allocation (donut) + Panel 1" section
+# further down) takes over from that point, showing the SAME weights with the
+# real number revealed -- keeping both on screen at once would just duplicate
+# the same wheel twice.
+if 2 not in st.session_state["unlocked_steps"]:
     # ----------------------------------------------------------------------------
     # Live preview of the user's own (not-yet-calculated) portfolio -- same "?"
     # placeholder donut style as the sector cards just below, so both speak one
     # visual language: composition now, number after Calculate. Reads
     # weights_pct_map directly, so it updates on every edit to Step 1's table
-    # above; once revealed it plots the SAME beta_pct the headline below will
-    # show (already computed in the Computation block above -- not recomputed),
-    # so the two numbers can never drift apart.
+    # above.
     #
     # The "Normalize to 100%" button reuses the exact same proportional-scaling
     # math as Step 1's own "Normalize weights to 100%" button (which only ever
@@ -1823,8 +1825,8 @@ if is_portfolio_touched:
     with st.container(border=True, key="your_mix_preview"):
         preview_weights_frac = {t: w / 100.0 for t, w in weights_pct_map.items()}
         preview_donut = render_portfolio_donut(
-            preview_weights_frac, beta_pct if reveal_sector_ai else 0.0,
-            reveal=reveal_sector_ai,
+            preview_weights_frac, 0.0,
+            reveal=False,
         )
         st.plotly_chart(preview_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
                          key="your_mix_chart")
@@ -1955,9 +1957,9 @@ else:
         donut_fig = render_portfolio_donut(weights, beta_pct)
         st.plotly_chart(donut_fig, theme=None, width="stretch", config=PLOTLY_CONFIG)
         st.caption(
-            "Segment size is your portfolio weight. Green marks an AI basket member, gray is a "
-            "bond/Treasury/commodity fund with no equity exposure, and teal is other equity. "
-            "Shades vary within each group so neighboring segments don't blend together."
+            "Segment size is your portfolio weight. Green marks an AI basket member and gray is a "
+            "bond/Treasury/commodity fund with no equity exposure; other equity cycles through a "
+            "mixed color set so individual holdings stay visually distinct."
         )
         # Shareable link (polish pass, item 4) -- see encode_portfolio_query and
         # the "_shared_link_checked" consumption block near the top of the
