@@ -185,6 +185,22 @@ alongside the analysis, not after -- per the project's rigor rule (see
   AI-basket-driven, even though the measured beta is real. The app surfaces
   R² with a plain-language caption for exactly this reason, and calls it out
   explicitly whenever R² is below 0.3.
+- **Regression p-values are not shown anywhere in the app, and would be
+  misleadingly small if they were.** Checked ad hoc (not surfaced in the UI):
+  both the single-factor and two-factor regressions come back significant at
+  roughly p=1e-20 to p=1e-114, for an ordinary default portfolio and a
+  themed sector preset alike. That's not a meaningful signal -- daily
+  financial returns violate OLS's iid-error assumption (they're
+  autocorrelated and heteroskedastic; volatility clusters in time), which
+  biases standard errors, and therefore p-values, down. This is not a
+  clustering problem -- there's no grouping structure here, just one
+  portfolio's return series against one basket's return series, not panel
+  data -- so clustered standard errors wouldn't be the right fix even if
+  p-values were added. HAC/Newey-West standard errors would be, since they
+  correct a single time series for exactly this autocorrelation/
+  heteroskedasticity. Either way, beta and R² -- the two numbers the app
+  actually shows -- are point estimates, unaffected by which standard-error
+  method would be used to test their significance.
 - **The rolling 252-day beta chart can show step-like artifacts, not just smooth
   drift.** A single extreme-return day (e.g. the AI basket's -13.9% on
   2020-03-16, during the COVID crash) entering the trailing window as the
