@@ -135,6 +135,45 @@ PRESETS = {
     "Crypto-adjacent (COIN/SPY, shorter-history demo)": {"COIN": 60.0, "SPY": 40.0},
 }
 
+# Sector preset gallery (v4) -- one-click themed portfolios shown as cards right
+# after Step 1's manual builder, before the "Calculate my AI %" button (see the
+# render block right after the Computation section below). Every ticker here is
+# drawn from the same
+# XRAY_UNIVERSE / TICKER_GROUPS mapping that already backs the sidebar's "Browse
+# by category" and the Step 1 multiselect (see pull_prices.categories_for_app) --
+# no new tickers, no new data pull. Weights are an equal split across each
+# sector's tickers (fl.equal_split_weights, the same helper the app already uses
+# for "pick a fresh set of tickers from empty" in merge_selected_weights) --
+# illustrative, not a real sector-fund methodology; see the caption rendered
+# alongside the gallery. "AI Basket" reuses fl.AI_BASKET directly rather than
+# repeating the 8 tickers here, so it can never drift from the basket the rest of
+# the app measures against. Presets are filtered against the live `universe` at
+# render time (a ticker present here could still be missing from a given
+# data/prices.db pull), not assumed to always be fully available.
+SECTOR_PRESETS = {
+    "Healthcare Core": {"tag": "Healthcare", "tickers": ["JNJ", "UNH", "LLY", "PFE"]},
+    "Big Bank Financials": {"tag": "Financials", "tickers": ["JPM", "BAC", "V", "MA"]},
+    "Consumer Staples": {"tag": "Staples", "tickers": ["WMT", "PG", "KO", "PEP"]},
+    "Energy Majors": {"tag": "Energy", "tickers": ["XOM", "CVX", "XLE"]},
+    "Industrial Heavyweights": {"tag": "Industrials", "tickers": ["BA", "CAT", "GE"]},
+    "Semiconductors": {"tag": "Semis", "tickers": ["MU", "AMD", "QCOM", "INTC"]},
+    "Broad Market Baseline": {"tag": "Index", "tickers": ["VOO"]},
+    # Not an equal split like the others -- half broad-market core, half a
+    # handful of stable/defensive blue chips, the same "core + a few familiar
+    # names" shape as this app's own DEFAULT_PORTFOLIO above, just built from
+    # defensive names instead of a growth tilt. Weights hardcoded directly
+    # (see the setdefault() loop below) rather than via equal_split_weights,
+    # since 50% VOO isn't an equal share of 4 tickers.
+    "Classic Investor": {
+        "tag": "Balanced", "tickers": ["VOO", "JNJ", "PG", "KO"],
+        "weights": {"VOO": 50.0, "JNJ": 17.0, "PG": 17.0, "KO": 16.0},
+    },
+    "AI Basket": {"tag": "AI", "tickers": list(fl.AI_BASKET)},
+}
+for _preset in SECTOR_PRESETS.values():
+    _preset.setdefault("weights", fl.equal_split_weights(_preset["tickers"]))
+del _preset
+
 
 # ============================================================================
 # Cached data layer -- everything here is independent of the user's portfolio,
@@ -251,6 +290,35 @@ def validate_weights(weight_map: dict):
 
 
 # ============================================================================
+# Shareable-link encoding (polish pass, item 4) -- serializes {ticker: weight_pct}
+# into a single URL query param value so a portfolio can be attached to an email/
+# LinkedIn message and land the recipient back in this exact state, not just a
+# blank app. Deliberately simple (TICKER:WEIGHT pairs, comma-joined) rather than
+# base64/JSON -- stays human-readable in the address bar, and Streamlit's own
+# st.query_params already handles URL-escaping the joined string on write/read.
+# ============================================================================
+
+def encode_portfolio_query(weights_pct_map: dict) -> str:
+    return ",".join(f"{ticker}:{weight:.2f}" for ticker, weight in weights_pct_map.items())
+
+
+def decode_portfolio_query(raw: str) -> dict:
+    """Best-effort parse -- a hand-edited or truncated URL degrades to dropping
+    the unparseable pair(s) rather than failing the whole link."""
+    decoded = {}
+    for pair in raw.split(","):
+        ticker, _, weight_str = pair.partition(":")
+        ticker = ticker.strip().upper()
+        if not ticker or not weight_str:
+            continue
+        try:
+            decoded[ticker] = float(weight_str)
+        except ValueError:
+            continue
+    return decoded
+
+
+# ============================================================================
 # Chart builders (Plotly) -- dark-fintech styling, shared base layout
 # ============================================================================
 
@@ -272,7 +340,7 @@ def _apply_base_layout(fig: go.Figure, y_title: str = None, x_title: str = None,
         showlegend=False,
         hoverlabel=dict(bgcolor="#23251E", font_color=TEXT_PRIMARY, font_family=FONT_STACK, bordercolor=LIME),
         xaxis=dict(showgrid=False, zeroline=False, showline=True, linecolor="rgba(154,156,147,0.3)",
-                    tickfont=dict(color=TEXT_MUTED)),
+                    tickfont=dict(color=TEXT_MUTED), automargin=True),
         yaxis=dict(showgrid=True, gridcolor=GRIDLINE, zeroline=False, showline=False,
                     tickfont=dict(color=TEXT_MUTED)),
     )
@@ -539,7 +607,9 @@ def _donut_group_for(ticker: str) -> str:
     return "other"
 
 
-def render_portfolio_donut(weights: dict, beta_pct: float):
+def render_portfolio_donut(weights: dict, beta_pct: float, height: int = 340,
+                            number_font_size: int = 26, label_font_size: int = 11, margin: int = 48,
+                            reveal: bool = True):
     """Donut (go.Pie, hole=0.55) -- one segment per holding, sized by weight.
     Color signals the GROUP a holding belongs to (AI basket / no equity exposure /
     other equity), with a few shades per group so two same-group segments sitting
@@ -547,6 +617,16 @@ def render_portfolio_donut(weights: dict, beta_pct: float):
     donut hole carries the portfolio's already-computed effective AI exposure --
     this chart is placed after the Computation block specifically so that number
     is available here, not recomputed.
+
+    height/number_font_size/label_font_size/margin default to the full-size "Portfolio
+    at a glance" rendering; the sector preset gallery cards pass smaller values to reuse
+    this exact same component (same color logic, same hover behavior) at card scale
+    instead of a second bespoke donut builder.
+
+    reveal=False swaps the hole's "X% AI" annotation for a neutral placeholder --
+    used by the sector gallery when it's shown before the user has pressed
+    "Calculate my AI %", so picking a card to peek at its composition doesn't
+    leak that portfolio's number ahead of the button that promises to reveal it.
     """
     tickers = list(weights.keys())
     weight_pcts = [weights[t] * 100 for t in tickers]
@@ -574,20 +654,30 @@ def render_portfolio_donut(weights: dict, beta_pct: float):
         showlegend=False,
     ))
 
-    fig.add_annotation(
-        text=f"{beta_pct:.0f}% AI", x=0.5, y=0.56, xref="paper", yref="paper",
-        showarrow=False, font=dict(color=LIME, size=26, family=FONT_STACK),
-    )
-    fig.add_annotation(
-        text="effectively AI", x=0.5, y=0.44, xref="paper", yref="paper",
-        showarrow=False, font=dict(color=TEXT_MUTED, size=11, family=FONT_STACK),
-    )
+    if reveal:
+        fig.add_annotation(
+            text=f"{beta_pct:.0f}% AI", x=0.5, y=0.56, xref="paper", yref="paper",
+            showarrow=False, font=dict(color=LIME, size=number_font_size, family=FONT_STACK),
+        )
+        fig.add_annotation(
+            text="effectively AI", x=0.5, y=0.44, xref="paper", yref="paper",
+            showarrow=False, font=dict(color=TEXT_MUTED, size=label_font_size, family=FONT_STACK),
+        )
+    else:
+        fig.add_annotation(
+            text="?", x=0.5, y=0.56, xref="paper", yref="paper",
+            showarrow=False, font=dict(color=TEXT_MUTED, size=number_font_size, family=FONT_STACK),
+        )
+        fig.add_annotation(
+            text="tap Calculate to reveal", x=0.5, y=0.44, xref="paper", yref="paper",
+            showarrow=False, font=dict(color=TEXT_MUTED, size=label_font_size, family=FONT_STACK),
+        )
 
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
-        margin=dict(t=30, l=30, r=30, b=30),
-        height=340,
+        margin=dict(t=margin, l=margin, r=margin, b=margin),
+        height=height,
         font=dict(family=FONT_STACK, color=TEXT_MUTED),
     )
     return fig
@@ -598,6 +688,33 @@ def render_portfolio_donut(weights: dict, beta_pct: float):
 # already computed elsewhere (m1_table betas, the user's own beta/scenario
 # numbers). No new math, just phrasing.
 # ============================================================================
+
+# Risk-flag band for the headline number's badge -- thresholds are a disclosed,
+# arbitrary convention (~25% / ~50%), not a claim backed by an external benchmark
+# figure (no defensible, sourced comparison number -- e.g. a real Nasdaq 100 AI
+# weighting -- was available to cite here; see the polish-pass notes on why this
+# app doesn't fabricate one). Banded on the raw signed value, not its magnitude:
+# a negative or near-zero beta genuinely means low/no measured AI co-movement,
+# so it belongs in the same "LOW" band as a small positive one, not its own case.
+AI_RISK_BAND_MODERATE_FLOOR = 25.0
+AI_RISK_BAND_HIGH_FLOOR = 50.0
+
+
+def ai_risk_band(beta_pct: float) -> tuple:
+    """(band_label, css_class, color, one_line_caption) for the badge next to the
+    headline AI% number. Pure function of beta_pct -- no new computation."""
+    if beta_pct < AI_RISK_BAND_MODERATE_FLOOR:
+        return ("LOW", "low", LIME,
+                f"Below {AI_RISK_BAND_MODERATE_FLOOR:.0f}%: this portfolio's daily moves are only "
+                "lightly tied to the AI basket.")
+    if beta_pct < AI_RISK_BAND_HIGH_FLOOR:
+        return ("MODERATE", "moderate", AMBER,
+                f"{AI_RISK_BAND_MODERATE_FLOOR:.0f}-{AI_RISK_BAND_HIGH_FLOOR:.0f}%: a meaningful share "
+                "of this portfolio's moves now track the AI basket.")
+    return ("HIGH", "high", NEG_RED,
+            f"Above {AI_RISK_BAND_HIGH_FLOOR:.0f}%: this portfolio behaves more like a concentrated "
+            "AI bet than a diversified fund.")
+
 
 def format_ticker_list(tickers: list, max_named: int = 3) -> str:
     """'A, B, C' for a short list; 'A, B, C and N others' once naming every ticker
@@ -750,6 +867,45 @@ st.markdown(f"""
     }}
 
     [data-testid="stExpander"] {{ border: none; background-color: {BG_CARD}; border-radius: 16px; }}
+
+    /* Sector-gallery expander -- same lime CTA family as the Calculate/Run
+       buttons above (scoped to this one expander via its key), just a
+       smaller pill since it's a secondary, optional path rather than the
+       main flow. The clickable region is the <summary>, not the whole
+       expander shell, so the CTA look only applies there. */
+    .st-key-sector_gallery_expander [data-testid="stExpander"] {{
+        background-color: transparent;
+    }}
+    .st-key-sector_gallery_expander summary,
+    .st-key-repricing_gallery_expander summary {{
+        background-color: {LIME} !important; border-radius: 999px !important;
+        padding: 8px 18px !important; box-shadow: 0 0 14px rgba(200,241,53,0.35);
+        display: inline-flex !important; width: fit-content !important; margin: 0 auto !important;
+    }}
+    .st-key-sector_gallery_expander summary:hover,
+    .st-key-repricing_gallery_expander summary:hover {{
+        background-color: #DFFF6B !important; box-shadow: 0 0 20px rgba(200,241,53,0.5);
+    }}
+    .st-key-sector_gallery_expander summary p,
+    .st-key-repricing_gallery_expander summary p {{
+        color: #0E0F0C !important; font-weight: 700; font-size: 0.95rem;
+    }}
+    .st-key-sector_gallery_expander summary [data-testid="stIconMaterial"],
+    .st-key-repricing_gallery_expander summary [data-testid="stIconMaterial"] {{
+        color: #0E0F0C !important;
+    }}
+    .st-key-repricing_gallery_expander [data-testid="stExpander"] {{
+        background-color: transparent;
+    }}
+
+    /* Sector-preset dropdowns -- a lime outline so they visually read as an
+       interactive control instead of a flat label (otherwise looks like
+       plain text with no obvious affordance to open more options). */
+    .st-key-sector_preset_pick [data-testid="stSelectbox"] [role="group"],
+    .st-key-repricing_preset_pick [data-testid="stSelectbox"] [role="group"] {{
+        border: 2px solid {LIME} !important; border-radius: 10px !important;
+        box-shadow: 0 0 10px rgba(200,241,53,0.25);
+    }}
     .stAlert {{ background-color: {BG_CARD} !important; border: 1px solid #2A2C24; border-radius: 14px; }}
     [data-testid="stDataFrame"], [data-testid="stTable"], [data-testid="stDataEditor"] {{ border: none; border-radius: 14px; overflow: hidden; }}
     hr {{ border-color: #23251E; }}
@@ -799,6 +955,15 @@ st.markdown(f"""
 
     .app-subtitle {{ color: {TEXT_MUTED}; font-size: 1.15rem; margin-bottom: 10px; text-align: center; }}
 
+    /* Byline (polish pass, item 6) -- the same "Built by..." credit as the
+       persistent footer (see .app-footer below), just also surfaced here so a
+       visitor who never scrolls to the bottom still sees it. Small and muted on
+       purpose -- a name/link line, not a second subtitle competing with the
+       actual hero copy above it. Footer stays as-is; this is additive. */
+    .hero-byline {{ text-align: center; color: {TEXT_MUTED}; font-size: 0.82rem; margin: -6px 0 14px 0; }}
+    .hero-byline a {{ font-weight: 600; }}
+    .hero-byline .byline-sep {{ margin: 0 6px; opacity: 0.5; }}
+
     /* Block itself centered (margin: auto within its max-width); the note's
        own text stays left-aligned inside that centered box -- a left-border
        "callout" reads oddly with centered paragraph text, and the title/
@@ -810,7 +975,7 @@ st.markdown(f"""
     }}
 
     .hero-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 2px; font-size: 0.78rem; font-weight: 600; }}
-    .hero-number {{ color: {LIME}; font-size: 4.4rem; font-weight: 800; line-height: 1.0; margin: 6px 0 20px 0; }}
+    .hero-number {{ color: {LIME}; font-size: 4.4rem; font-weight: 800; line-height: 1.0; margin: 6px 0 10px 0; }}
     /* explicit !important on both spans below: the blanket "span {{ color: ... !important }}"
        rule earlier in this block otherwise wins over an un-marked rule despite these being
        more specific -- !important is compared before specificity, not after. "%" stays the
@@ -818,6 +983,23 @@ st.markdown(f"""
        suffix labeling what the number measures -- two sizes/colors, not three. */
     .hero-number .unit-pct {{ color: {LIME} !important; font-size: 2.6rem; font-weight: 800; }}
     .hero-number .unit-suffix {{ color: {TEXT_MUTED} !important; font-size: 1.9rem; font-weight: 600; margin-left: 6px; }}
+    /* Risk-flag badge (polish pass, item 1) -- sits beside the headline number,
+       one glance "so what" before the reader has to parse the verdict paragraph
+       below. vertical-align + explicit smaller font-size pull it out of the
+       4.4rem/line-height:1.0 numeral it's nested inside; !important on color for
+       the same span-selector-precedence reason as unit-pct/unit-suffix above.
+       Background is the same color at low opacity, not a solid fill -- a solid
+       red/amber fill this large would read as an alarm/error state, which this
+       app deliberately avoids (see the module docstring: never claim a crash). */
+    .risk-badge {{
+        display: inline-flex; align-items: center; vertical-align: middle;
+        border-radius: 999px; padding: 5px 14px; margin-left: 16px;
+        font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+    }}
+    .risk-badge-low {{ background: rgba(200,241,53,0.14); color: {LIME} !important; border: 1px solid rgba(200,241,53,0.4); }}
+    .risk-badge-moderate {{ background: rgba(227,168,59,0.14); color: {AMBER} !important; border: 1px solid rgba(227,168,59,0.4); }}
+    .risk-badge-high {{ background: rgba(244,83,74,0.14); color: {NEG_RED} !important; border: 1px solid rgba(244,83,74,0.4); }}
+    .risk-caption {{ color: {TEXT_MUTED}; font-size: 0.85rem; margin: 0 0 18px 0; }}
     .hero-substats {{ display: flex; gap: 36px; flex-wrap: wrap; }}
     .hero-substat .sub-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 1px; font-size: 0.68rem; font-weight: 600; }}
     .hero-substat .sub-value {{ color: {TEXT_PRIMARY}; font-size: 1.5rem; font-weight: 700; margin-top: 2px; }}
@@ -829,6 +1011,12 @@ st.markdown(f"""
     .comparative-line {{ color: {TEXT_MUTED}; font-size: 0.88rem; margin: 0 0 4px 0; }}
 
     .diag-line {{ color: {TEXT_MUTED}; font-size: 0.85rem; }}
+    /* One-line plain-language gloss under "Gate check: PASS" (polish pass, item
+       3) -- so it reads as a verified data-quality check instead of leftover
+       debug output. Smaller and dimmer than the diag-line it sits under; kept
+       as its own class rather than reusing .diag-line so it stays visually
+       secondary to the PASS/FAIL line itself. */
+    .diag-subcaption {{ color: {TEXT_MUTED}; font-size: 0.75rem; opacity: 0.8; margin: -1px 0 6px 0; }}
     /* same !important-vs-specificity issue as .unit above, plus it's nested inside the
        sidebar's own "[data-testid="stSidebar"] * {{ color: ... !important }}" rule --
        scope + !important so this one reliably wins. */
@@ -882,6 +1070,17 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown('<div class="app-subtitle">How much AI is secretly in your portfolio?</div>', unsafe_allow_html=True)
+# Byline (polish pass, item 6) -- surfaces the same credit as the persistent
+# footer near the top too, since most visitors arriving from a cold email/link
+# never scroll to the bottom far enough to see it (see .app-footer below,
+# which stays in place -- this is additive, not a replacement).
+st.markdown(
+    '<div class="hero-byline">Built by '
+    '<a href="https://github.com/IlanNir664/hidden-ai-portfolio" target="_blank">Ilan Niraev</a>'
+    '<span class="byline-sep">&middot;</span>'
+    '<a href="https://www.linkedin.com/in/ilan-niraev-054a233b4" target="_blank">LinkedIn</a></div>',
+    unsafe_allow_html=True,
+)
 # v3: added a short "why 2000" clause -- the disclaimer's headline reference scenario
 # used to go unexplained here (see Step 5's own caption for the fuller version: 2000
 # is the closest concentration-crash analogy on record; 2008 and 2022 are shown too,
@@ -1030,8 +1229,10 @@ def render_progress_dots() -> None:
 
 
 def step_anchor(n: int) -> None:
-    """Zero-height scroll target -- see the smooth-scroll call at the bottom
-    of the script, which scrolls to step-anchor-{scroll_target}."""
+    """Zero-height marker div for each step -- kept as a stable DOM id per
+    step in case a future feature needs to target it; no longer used for
+    auto-scrolling (removed: it fired on every gate button, not just the
+    first time, and users found it disorienting)."""
     st.markdown(f'<div id="step-anchor-{n}"></div>', unsafe_allow_html=True)
 
 
@@ -1047,7 +1248,58 @@ def animate_container(key: str, step_n: int, animate_now: set) -> None:
 # the sidebar preset loader, or the Step 1 -> Step 2+ cascade) immediately
 # before its own st.rerun(), so this always reflects "what just unlocked".
 animate_now = st.session_state.pop("_flash_animate", set())
-scroll_target = st.session_state.pop("_scroll_target", None)
+
+# Sector preset gallery cards (below, in script order after this point)
+# stash their chosen preset here and rerun rather than writing
+# selected_tickers/weight_map directly from the card's own click handler --
+# keeps every "load a whole portfolio at once" entry point (sidebar preset,
+# sector card, shared link) funneling through the same one place, right
+# before Step 1 reads this state, instead of three separately-timed writes.
+pending_sector_preset = st.session_state.pop("_pending_sector_preset", None)
+if pending_sector_preset is not None:
+    st.session_state["selected_tickers"] = list(pending_sector_preset.keys())
+    st.session_state["weight_map"] = dict(pending_sector_preset)
+    st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
+
+# Shareable link (polish pass, item 4) -- restores a portfolio encoded in the
+# "p" query param (see encode_portfolio_query/decode_portfolio_query and the
+# "Copy shareable link" button in the donut section below) exactly once per
+# browser session, on whatever the first run happens to be. Checked here
+# (before Step 1's multiselect is ever instantiated this run, same
+# requirement as pending_sector_preset above) so a shared link works whether
+# this is a brand-new session or a resumed one, but never re-applies itself
+# afterward and fights the user's own edits or their own later use of the
+# same "Copy shareable link" button (which also writes "p", but only this
+# once-per-session flag decides whether it gets read back as an incoming
+# portfolio to load).
+if "_shared_link_checked" not in st.session_state:
+    st.session_state["_shared_link_checked"] = True
+    shared_raw = st.query_params.get("p")
+    if shared_raw:
+        shared_weights = {
+            t: w for t, w in decode_portfolio_query(shared_raw).items() if t in universe
+        }
+        if shared_weights:
+            st.session_state["selected_tickers"] = list(shared_weights.keys())
+            st.session_state["weight_map"] = dict(shared_weights)
+            st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
+            unlock_step(1)
+
+# Consumed once, right after the "Copy shareable link" button's own st.rerun()
+# (see the donut section below) -- st.query_params was already set to the new
+# "p" value in the run that clicked the button, so by this run the browser's
+# address bar already reflects it; this just best-effort copies that URL to
+# the clipboard (wrapped in .catch since clipboard permission can be denied
+# silently in some embeds) and confirms via st.toast either way, since the
+# toast doesn't depend on the clipboard write actually succeeding.
+if st.session_state.pop("_flash_copy_link", False):
+    st.html(
+        "<script>setTimeout(function() { "
+        "navigator.clipboard.writeText(window.location.href).catch(function() {}); "
+        "}, 150);</script>",
+        unsafe_allow_javascript=True,
+    )
+    st.toast("Shareable link copied — this portfolio is now saved in the URL.")
 
 render_progress_dots()
 
@@ -1098,7 +1350,6 @@ with st.container(border=True):
         if st.button("Show me how →", key="step0_continue", type="primary"):
             if unlock_step(1):
                 st.session_state["_flash_animate"] = {1}
-                st.session_state["_scroll_target"] = 1
             st.rerun()
 
 # ============================================================================
@@ -1109,6 +1360,8 @@ with st.sidebar:
     st.markdown("**Diagnostics**")
     st.markdown(
         f'<div class="diag-line">Gate check: <span class="diag-ok">PASS</span></div>'
+        f'<div class="diag-subcaption">Confirms the {len(universe)}-ticker price data is complete '
+        f'and internally consistent.</div>'
         f'<div class="diag-line">SPY 2022 drawdown: {gate_drawdown * 100:.2f}%</div>'
         f'<div class="diag-line">Universe: {len(universe)} tickers</div>'
         f'<div class="diag-line">Source: data/prices.db</div>',
@@ -1123,7 +1376,7 @@ with st.sidebar:
         preset = PRESETS[preset_choice]
         st.session_state["selected_tickers"] = list(preset.keys())
         st.session_state["weight_map"] = dict(preset)
-        st.session_state["weight_editor_base_tickers"] = None  # force the weight editor to resync
+        st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
         # A preset is a complete, always-valid portfolio -- treat loading one as
         # equivalent to clicking Step 0's continue button, so a returning user
         # who jumps straight to a preset still gets Step 1 revealed (and, once
@@ -1131,7 +1384,6 @@ with st.sidebar:
         # ticker entry would trigger).
         if unlock_step(1):
             st.session_state["_flash_animate"] = {1}
-            st.session_state["_scroll_target"] = 1
         st.rerun()
 
     st.markdown("---")
@@ -1169,99 +1421,82 @@ if "selected_tickers" not in st.session_state:
     st.session_state["selected_tickers"] = list(DEFAULT_PORTFOLIO.keys())
 if "weight_map" not in st.session_state:
     st.session_state["weight_map"] = dict(DEFAULT_PORTFOLIO)
-# The weight editor's OWN stable snapshot of {ticker: weight_pct} -- see the
-# st.data_editor call below for why this must be a separate thing from
-# weight_map (which tracks live edits for everything else in the app).
-if "weight_editor_base_tickers" not in st.session_state:
-    st.session_state["weight_editor_base_tickers"] = tuple(st.session_state["selected_tickers"])
-    st.session_state["weight_editor_base_weights"] = dict(st.session_state["weight_map"])
+# Bumped every time weight_map is replaced wholesale from OUTSIDE the weight
+# inputs below (preset load, sector-card pick, shared link, Normalize) --
+# each ticker's st.number_input is keyed on this version, so a bulk replace
+# gives every box a fresh key and therefore picks up its new `value=`
+# instead of a stale one, without needing to touch each key individually.
+# A single per-ticker edit (typing into that ticker's own box) does NOT bump
+# this -- Streamlit already reflects that edit via the widget's own state.
+if "weight_map_version" not in st.session_state:
+    st.session_state["weight_map_version"] = 0
 
 animate_container("step1_box", 1, animate_now)
 with st.container(border=True, key="step1_box"):
-    # Manual-entry fallback runs BEFORE the multiselect widget below is instantiated,
-    # so it can still write to st.session_state["selected_tickers"] this same rerun --
-    # Streamlit forbids mutating a widget's session_state key after that widget has
-    # already been created in the same script run.
-    with st.expander("Manual entry (comma-separated tickers)"):
-        manual_text = st.text_input("e.g. SPY, TLT, NVDA", key="manual_ticker_input", label_visibility="collapsed",
-                                     placeholder="e.g. SPY, TLT, NVDA")
-        if st.button("Add to portfolio", key="manual_add_btn"):
-            candidates = [t.strip().upper() for t in manual_text.split(",") if t.strip()]
-            unsupported = [t for t in candidates if t not in universe]
-            new_tickers = [t for t in candidates if t in universe and t not in st.session_state["selected_tickers"]]
-            if unsupported:
-                st.error(f"Not in the supported universe: {', '.join(unsupported)}.")
-            if new_tickers:
-                st.session_state["selected_tickers"] = st.session_state["selected_tickers"] + new_tickers
-                st.rerun()
+    # Ticker add/remove now lives entirely in this container instead of split
+    # across a multiselect widget + a collapsed "manual entry" expander --
+    # "selected_tickers" is plain app state here (a list we read/write
+    # directly), not a widget's own session_state key, so none of these
+    # buttons need the deferred "pending write + rerun" dance that widget
+    # keys (like the multiselect this replaced) would require.
+    add_col, btn_col = st.columns([5, 1])
+    with add_col:
+        addable = [t for t in sorted_universe if t not in st.session_state["selected_tickers"]]
+        ticker_to_add = st.selectbox(
+            "Add a ticker",
+            options=addable,
+            format_func=lambda t: f"{t} ({category_of[t]})",
+            key="ticker_add_select",
+            index=None,
+            placeholder="Search by ticker or category to add…",
+            label_visibility="collapsed",
+        )
+    with btn_col:
+        if st.button("+ Add", key="ticker_add_btn", width="stretch", disabled=ticker_to_add is None):
+            st.session_state["selected_tickers"] = st.session_state["selected_tickers"] + [ticker_to_add]
+            st.rerun()
 
-    selected = st.multiselect(
-        "Search & select tickers (grouped by category)",
-        options=sorted_universe,
-        format_func=lambda t: f"{t} ({category_of[t]})",
-        key="selected_tickers",
-    )
-
-    # Resync the weight editor's stable snapshot ONLY when the ticker selection
-    # actually changed (add/remove/preset/normalize -- the last two force this via
-    # the None sentinel below) -- not on every rerun. See the st.data_editor call
-    # below for why this matters: rebuilding its `data` from live edits every
-    # keystroke was the revert bug.
-    current_tickers = tuple(selected)
-    if st.session_state["weight_editor_base_tickers"] != current_tickers:
-        merged = fl.merge_selected_weights(list(selected), st.session_state["weight_map"])
-        st.session_state["weight_map"] = merged
-        st.session_state["weight_editor_base_tickers"] = current_tickers
-        st.session_state["weight_editor_base_weights"] = dict(merged)
+    selected = st.session_state["selected_tickers"]
+    if selected:
+        st.caption("In your portfolio -- click to remove:")
+        remove_cols = st.columns(min(len(selected), 7))
+        for i, t in enumerate(selected):
+            with remove_cols[i % len(remove_cols)]:
+                if st.button(f"{t} ✕", key=f"remove_chip_{t}", width="stretch"):
+                    st.session_state["selected_tickers"] = [x for x in selected if x != t]
+                    st.rerun()
 
     weights_pct_map = {}
     if selected:
-        # ROOT CAUSE of the weight-editor revert bug (diagnosed against Streamlit
-        # 1.59's st.elements.widgets.data_editor source): st.data_editor computes
-        # its *internal* widget identity via compute_and_register_element_id(...,
-        # key_as_main_identity=False, data=arrow_bytes, ...) -- so even with an
-        # explicit `key=`, that identity is a hash that includes the CONTENT of
-        # `data`. The previous code rebuilt `weight_df` from
-        # st.session_state["weight_map"] -- which the same rerun's write-back had
-        # just updated -- so every edit changed `data`'s content and therefore the
-        # widget's internal id on the NEXT rerun. The frontend's pending edit
-        # (tagged with the id from the render it was typed against) then arrived
-        # one render behind the server's freshly-recomputed id, so
-        # register_widget() found no stored state for the new id and returned an
-        # empty diff -- silently dropping that edit and re-displaying the old
-        # value. This only bit on the 2nd+ edit in a session (the 1st edit's
-        # `data` still matched the initial render's id), matching the reported
-        # "sometimes" symptom.
-        #
-        # Fix: keep `data` byte-identical across reruns unless the ticker
-        # selection itself changed (weight_editor_base_weights above, updated
-        # only on add/remove/preset/normalize) -- so the widget's id, and thus
-        # Streamlit's accumulated edited_rows diff, stays stable across any
-        # number of consecutive cell edits. Live edits are read from st.data_editor's
-        # *return value* (always correct -- Streamlit reapplies the full diff to
-        # `data` before returning it) and written into weight_map for everything
-        # else in the app to use; they deliberately do NOT feed back into
-        # weight_editor_base_weights, which is what breaks the feedback loop.
-        weight_df = pd.DataFrame({
-            "ticker": list(selected),
-            "weight_pct": [st.session_state["weight_editor_base_weights"].get(t, 0.0) for t in selected],
-        })
-        edited = st.data_editor(
-            weight_df,
-            key="weight_editor_widget",
-            column_config={
-                "ticker": st.column_config.TextColumn("Ticker", disabled=True),
-                "weight_pct": st.column_config.NumberColumn("Weight %", format="%.2f"),
-            },
-            num_rows="fixed",
-            hide_index=True,
-            width="stretch",
-        )
-        weights_pct_map = {row["ticker"]: float(row["weight_pct"]) for _, row in edited.iterrows()}
+        version = st.session_state["weight_map_version"]
+        header_cols = st.columns([2, 3])
+        with header_cols[0]:
+            st.markdown(f'<div style="color:{TEXT_MUTED}; font-size:0.78rem;">TICKER</div>',
+                        unsafe_allow_html=True)
+        with header_cols[1]:
+            st.markdown(f'<div style="color:{TEXT_MUTED}; font-size:0.78rem;">WEIGHT %</div>',
+                        unsafe_allow_html=True)
+        for t in selected:
+            row_cols = st.columns([2, 3])
+            with row_cols[0]:
+                st.markdown(f'<div style="padding-top:10px; font-weight:600;">{t}</div>',
+                            unsafe_allow_html=True)
+            with row_cols[1]:
+                # Keyed on weight_map_version, not just the ticker, so a bulk
+                # replace of weight_map (preset/sector pick/shared
+                # link/Normalize -- see the version-bump comment above) gives
+                # this box a fresh widget identity and re-reads `value=`
+                # instead of Streamlit preserving whatever was last typed here.
+                weights_pct_map[t] = st.number_input(
+                    f"{t} weight", min_value=0.0, max_value=100.0, step=5.0,
+                    value=float(st.session_state["weight_map"].get(t, 0.0)),
+                    key=f"weight_input_{t}_v{version}", label_visibility="collapsed",
+                )
         st.session_state["weight_map"] = dict(weights_pct_map)
         st.caption(
-            "Edit a weight and press Enter (or click away) to apply it. New tickers start at 0%, "
-            "so update the weight yourself, or hit Normalize below once your mix adds up to 100%."
+            "Type a weight or use the −/+ steppers, then press Enter (or click away) to apply it. "
+            "New tickers start at 0%, so update the weight yourself, or hit Normalize below once "
+            "your mix adds up to 100%."
         )
 
     weights, errors, warnings_ = validate_weights(weights_pct_map)
@@ -1276,7 +1511,7 @@ with st.container(border=True, key="step1_box"):
         if total > 0:
             if st.button("Normalize weights to 100%"):
                 st.session_state["weight_map"] = {t: w / total * 100.0 for t, w in weights_pct_map.items()}
-                st.session_state["weight_editor_base_tickers"] = None  # force the weight editor to resync
+                st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
                 st.rerun()
         st.stop()
 
@@ -1305,7 +1540,6 @@ CASCADE_STEPS = (7,)
 newly_cascade = {n for n in CASCADE_STEPS if unlock_step(n)}
 if newly_cascade:
     st.session_state["_flash_animate"] = newly_cascade
-    st.session_state["_scroll_target"] = min(newly_cascade)
     st.rerun()
 
 # ============================================================================
@@ -1379,6 +1613,163 @@ with st.spinner("X-raying your portfolio…"):
     user_rolling_full = fl.rolling_beta(user_log, ai_log, fl.WINDOW)
 
 # ============================================================================
+# Sector preset gallery -- one-click themed portfolios, shown right after
+# Step 1's manual builder and BEFORE the "Calculate my AI %" button, as a
+# faster alternative way to load a portfolio (not a replacement for the
+# manual ticker/weight table above, which is untouched). Deliberately NOT
+# gated behind "2 in unlocked_steps": a user should be able to browse and
+# pick a themed mix before ever calculating, the same way they can already
+# pick from the sidebar's "Quick presets" dropdown before calculating.
+#
+# What IS gated is the AI% number inside each card's donut hole (see
+# `reveal` on render_portfolio_donut): pre-calculate, every card shows only
+# its composition, not its number, so browsing sector cards can't spoil the
+# "Calculate my AI %" button's own reveal. Once that button is pressed,
+# revisiting this section (it stays in place, doesn't move or disappear)
+# shows every card's real AI%, so the user can compare their chosen
+# portfolio's headline number above against every sector at a glance --
+# not just the one they picked.
+# ============================================================================
+
+reveal_sector_ai = 2 in st.session_state["unlocked_steps"]
+
+# Only shows once the portfolio actually differs from the untouched
+# pre-loaded default -- either by editing Step 1's table directly or by
+# picking a popular portfolio below/in the sidebar. Otherwise this preview
+# would render on every fresh session before the user has made any choice
+# of their own, which just duplicates Step 1's table with nothing new to say.
+is_portfolio_touched = not (
+    set(weights_pct_map.keys()) == set(DEFAULT_PORTFOLIO.keys())
+    and all(abs(weights_pct_map[t] - DEFAULT_PORTFOLIO[t]) < 0.01 for t in DEFAULT_PORTFOLIO)
+)
+
+if is_portfolio_touched:
+    # ----------------------------------------------------------------------------
+    # Live preview of the user's own (not-yet-calculated) portfolio -- same "?"
+    # placeholder donut style as the sector cards just below, so both speak one
+    # visual language: composition now, number after Calculate. Reads
+    # weights_pct_map directly, so it updates on every edit to Step 1's table
+    # above; once revealed it plots the SAME beta_pct the headline below will
+    # show (already computed in the Computation block above -- not recomputed),
+    # so the two numbers can never drift apart.
+    #
+    # The "Normalize to 100%" button reuses the exact same proportional-scaling
+    # math as Step 1's own "Normalize weights to 100%" button (which only ever
+    # appears in the weights-don't-sum-to-100 error state, which st.stop()s
+    # before reaching this point) -- same behavior, just also reachable here
+    # without having to first break your weights to see it.
+    # ----------------------------------------------------------------------------
+    st.markdown(
+        '<div class="section-label">YOUR ALLOCATION SO FAR</div>'
+        '<div class="section-title">Your current mix</div>',
+        unsafe_allow_html=True,
+    )
+    with st.container(border=True, key="your_mix_preview"):
+        preview_weights_frac = {t: w / 100.0 for t, w in weights_pct_map.items()}
+        preview_donut = render_portfolio_donut(
+            preview_weights_frac, beta_pct if reveal_sector_ai else 0.0,
+            reveal=reveal_sector_ai,
+        )
+        st.plotly_chart(preview_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
+                         key="your_mix_chart")
+        st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in weights_pct_map.items()))
+        if st.button("⚖️ Normalize to 100%", key="auto_balance_btn"):
+            total = sum(weights_pct_map.values())
+            if total > 0:
+                st.session_state["weight_map"] = {t: w / total * 100.0 for t, w in weights_pct_map.items()}
+                st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
+                st.rerun()
+
+    st.markdown('<div style="margin-top:10px;"></div>', unsafe_allow_html=True)
+st.markdown('<div class="section-label">MORE OPTIONS</div>', unsafe_allow_html=True)
+# Collapsed by default -- this is a secondary path (the manual table above is
+# the primary one), so it stays out of the way until the user actually wants
+# to browse sector mixes, instead of permanently occupying page space.
+with st.expander("Or start from a popular portfolio", expanded=False, key="sector_gallery_expander"):
+    if reveal_sector_ai:
+        st.caption(
+            "Pick a sector mix to swap it into the builder above and re-run the numbers. Now that "
+            "you've calculated your own AI %, its number is shown below too, so you can compare your "
+            "portfolio against it at a glance."
+        )
+        st.caption(
+            "AI% here is a sensitivity measure (regression beta against the AI basket), not a share "
+            "of holdings -- it can go over 100% if a mix is more volatile than the basket itself."
+        )
+    else:
+        st.caption(
+            "Not sure what to build? Pick a themed sector mix below to load it into the builder above, "
+            "then press “Calculate my AI %” to reveal how exposed it is -- yours and this "
+            "mix's number stay hidden until then."
+        )
+    available_sector_presets = {
+        name: preset for name, preset in SECTOR_PRESETS.items()
+        if all(t in universe for t in preset["tickers"])
+    }
+    preset_names = list(available_sector_presets.keys())
+
+    # Every option's AI% up front (not just the one currently picked) so the
+    # dropdown list itself shows each entry's number once revealed -- same
+    # reveal_sector_ai gate as the donut below, so nothing here shows before
+    # Calculate is pressed.
+    preset_beta_by_name = {}
+    if reveal_sector_ai:
+        for _name, _preset in available_sector_presets.items():
+            _preset_frac = {t: w / 100.0 for t, w in _preset["weights"].items()}
+            _preset_log = fl.to_log_returns(fl.build_portfolio_simple_returns(simple_returns, _preset_frac))
+            preset_beta_by_name[_name] = fl.single_factor_regress(_preset_log, ai_log)["beta"] * 100
+        del _name, _preset, _preset_frac, _preset_log
+
+    def _format_sector_option(name: str) -> str:
+        tag = available_sector_presets[name]["tag"]
+        if name in preset_beta_by_name:
+            return f"{name} ({tag}) -- {preset_beta_by_name[name]:.0f}% AI"
+        return f"{name} ({tag})"
+
+    sector_pick = st.selectbox(
+        "Pick a themed sector mix",
+        options=preset_names,
+        format_func=_format_sector_option,
+        index=preset_names.index("Classic Investor") if "Classic Investor" in preset_names else 0,
+        key="sector_preset_pick",
+        label_visibility="collapsed",
+    )
+    preset = available_sector_presets[sector_pick]
+    preset_weights_pct = preset["weights"]
+    is_active = (
+        set(preset_weights_pct.keys()) == set(weights_pct_map.keys())
+        and all(abs(preset_weights_pct[t] - weights_pct_map.get(t, -1.0)) < 0.01
+                for t in preset_weights_pct)
+    )
+    preset_weights_frac = {t: w / 100.0 for t, w in preset_weights_pct.items()}
+    preset_beta_pct = preset_beta_by_name.get(sector_pick, 0.0)
+    donut_col, info_col = st.columns([1, 1])
+    with donut_col:
+        mini_donut = render_portfolio_donut(
+            preset_weights_frac, preset_beta_pct,
+            height=170, number_font_size=16, label_font_size=8, margin=22,
+            reveal=reveal_sector_ai,
+        )
+        st.plotly_chart(mini_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
+                         key="sector_pick_chart")
+    with info_col:
+        st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in preset_weights_pct.items()))
+        if st.button(
+            "Currently active" if is_active else "Try this mix →",
+            key="sector_pick_btn", disabled=is_active, width="stretch",
+        ):
+            # See the "pending_sector_preset" comment near the top of the
+            # script for why this can't write selected_tickers/weight_map
+            # directly from here.
+            st.session_state["_pending_sector_preset"] = dict(preset_weights_pct)
+            st.rerun()
+    st.caption(
+        "Each sector mix is an equal-weighted, illustrative sample from this app's supported "
+        "universe, not investment advice or a real sector fund's methodology. Same fixed-weight, "
+        "daily-rebalanced assumption as the rest of this tool."
+    )
+
+# ============================================================================
 # Your allocation (donut) + Panel 1: Headline (hero card) -- both gated behind
 # one explicit "Calculate my AI %" button + the shared run_gate_animation()
 # progress animation, directly after the portfolio-building table (Step 1)
@@ -1396,7 +1787,6 @@ if 2 not in st.session_state["unlocked_steps"]:
         newly_ai = {n for n in (2, 3, 4) if unlock_step(n)}
         if newly_ai:
             st.session_state["_flash_animate"] = newly_ai
-            st.session_state["_scroll_target"] = min(newly_ai)
         st.rerun()
 else:
     st.markdown(
@@ -1413,6 +1803,17 @@ else:
             "bond/Treasury/commodity fund with no equity exposure, and sage is other equity. "
             "Shades vary within each group so neighboring segments don't blend together."
         )
+        # Shareable link (polish pass, item 4) -- see encode_portfolio_query and
+        # the "_shared_link_checked" consumption block near the top of the
+        # script for the other half of this. Sets the "p" query param (so the
+        # portfolio survives a copy/paste of the address bar even without the
+        # clipboard write below succeeding) and best-effort copies the full URL
+        # via the same unsafe_allow_javascript pattern the "_flash_copy_link"
+        # consumption block near the top of this file already uses.
+        if st.button("🔗 Copy shareable link", key="copy_share_link"):
+            st.query_params["p"] = encode_portfolio_query(weights_pct_map)
+            st.session_state["_flash_copy_link"] = True
+            st.rerun()
 
     section_header("2", "Your headline number")
 
@@ -1422,10 +1823,14 @@ else:
         # can be checked against Module 1's published figures (e.g. 60/40 -> 20.26%) at a
         # glance, without the rounding making an exact match look approximate.
         direct_value_html = f"{user_direct_pct:.1f}%" if user_direct_pct is not None else "N/A"
+        risk_label, risk_css_class, _risk_color, risk_caption = ai_risk_band(beta_pct)
         st.markdown(
             f'''
             <div class="hero-label">Your portfolio is effectively</div>
-            <div class="hero-number">{beta_pct:.0f}<span class="unit-pct">%</span> <span class="unit-suffix">AI</span></div>
+            <div class="hero-number">{beta_pct:.0f}<span class="unit-pct">%</span> <span class="unit-suffix">AI</span>
+              <span class="risk-badge risk-badge-{risk_css_class}">{risk_label}</span>
+            </div>
+            <div class="risk-caption">{risk_caption}</div>
             <div class="hero-substats">
               <div class="hero-substat"><div class="sub-label">Naive weight</div><div class="sub-value">{direct_value_html}</div></div>
               <div class="hero-substat"><div class="sub-label">R²</div><div class="sub-value">{r_squared:.2f}</div></div>
@@ -1434,6 +1839,20 @@ else:
             ''',
             unsafe_allow_html=True,
         )
+
+        # Methodology caveat, surfaced near the headline (polish pass, item 2) --
+        # same exact wording as Step 5's own caption (see the "Linear projection"
+        # st.caption() call further down), just also reachable from here via a
+        # click instead of only after scrolling all the way to the repricing
+        # chart. The verdict paragraph right below this already quotes the
+        # dot-com/no-bubble projected numbers this methodology produces, so this
+        # is the natural place for a reader to want the caveat. Step 5's own
+        # caption is untouched -- this is an additional pointer, not a move.
+        with st.popover("ⓘ How the projected numbers below are calculated", key="methodology_popover"):
+            st.caption(
+                "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "
+                "drift term. A projection, not a forecast. See LIMITATIONS.md."
+            )
 
         ref_betas_pct = {p: m1_table.loc[p, "beta"] * 100 for p in REFERENCE_PORTFOLIOS}
         nearest_name = nearest_reference_portfolio(beta_pct, ref_betas_pct)
@@ -1520,6 +1939,7 @@ else:
                 "way as the headline number against a differently-weighted basket."
             )
 
+
 # ============================================================================
 # Panel 2: Realized last-year return -- the upside your measured AI exposure
 # has already produced, shown before Panel 3's cross-portfolio comparison and
@@ -1579,6 +1999,48 @@ if 4 in st.session_state["unlocked_steps"]:
         st.plotly_chart(fig2, theme=None, width="stretch", config=PLOTLY_CONFIG)
         st.caption("AI basket: NVDA, MSFT, GOOGL, META, AMZN, AAPL, AVGO, TSM, equal-weighted. Your bar is the lime one.")
 
+    # The same themed sector mixes offered in Step 1's "Or start from a
+    # popular portfolio" picker, redrawn as wheels here so you can see every
+    # one of them next to your own number at once, instead of flipping
+    # through them one at a time in that dropdown. Betas are computed the
+    # same way as everywhere else in this app (single_factor_regress against
+    # ai_log), not looked up from a different table, so this can't drift
+    # from that dropdown's own numbers.
+    st.markdown(
+        '<div class="section-label">SIDE BY SIDE</div>'
+        '<div class="section-title">Other portfolios\' X-ray results</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "The same wheel as your own, run on the themed sector mixes from Step 1's picker, "
+        "so you can see how your number above compares against every one of them at once."
+    )
+    st.caption(
+        "AI% here is a sensitivity measure (regression beta against the AI basket), not a share "
+        "of holdings -- it can go over 100% if a mix is more volatile than the basket itself."
+    )
+    side_by_side_presets = {
+        name: preset for name, preset in SECTOR_PRESETS.items()
+        if all(t in universe for t in preset["tickers"])
+    }
+    side_by_side_cols = st.columns(4)
+    for i, (sbs_name, sbs_preset) in enumerate(side_by_side_presets.items()):
+        with side_by_side_cols[i % 4]:
+            with st.container(border=True, key=f"side_by_side_card_{i}"):
+                sbs_weights_frac = {t: w / 100.0 for t, w in sbs_preset["weights"].items()}
+                sbs_log = fl.to_log_returns(fl.build_portfolio_simple_returns(simple_returns, sbs_weights_frac))
+                sbs_beta_pct = fl.single_factor_regress(sbs_log, ai_log)["beta"] * 100
+                sbs_donut = render_portfolio_donut(
+                    sbs_weights_frac, sbs_beta_pct,
+                    height=140, number_font_size=13, label_font_size=7, margin=18,
+                )
+                st.plotly_chart(sbs_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
+                                 key=f"side_by_side_chart_{i}")
+                st.markdown(
+                    f'<div style="text-align:center; font-weight:700; color:{TEXT_PRIMARY};">{sbs_name}</div>',
+                    unsafe_allow_html=True,
+                )
+
 # ============================================================================
 # Panel 4: Scenario bars, and Panel 5: the tradeoff scatter -- both gated
 # behind one explicit "Run repricing simulation" button + the shared
@@ -1599,12 +2061,11 @@ if 4 in st.session_state["unlocked_steps"]:
 if 4 in st.session_state["unlocked_steps"]:
     step_anchor(5)
     if 5 not in st.session_state["unlocked_steps"]:
-        if st.button("Run repricing simulation →", key="run_repricing_sim", type="primary"):
+        if st.button("Run repricing simulation on your selected portfolio →", key="run_repricing_sim", type="primary"):
             run_gate_animation(REPRICING_SIM_STAGES)
             newly_sim = {n for n in (5, 6) if unlock_step(n)}
             if newly_sim:
                 st.session_state["_flash_animate"] = newly_sim
-                st.session_state["_scroll_target"] = min(newly_sim)
             st.rerun()
     else:
         section_header("5", "If a repricing happened")
@@ -1659,6 +2120,65 @@ if 4 in st.session_state["unlocked_steps"]:
                 "implies, same stance as the rest of this project.*"
             )
 
+        # --------------------------------------------------------------------
+        # Other portfolios' repricing -- same dropdown pattern as Step 1's
+        # "Or start from a popular portfolio" (mirrored key names below get
+        # matching CSS), but run through the SAME projection math as Step 5
+        # above (fl.two_factor_regress + fl.project_scenario) for a small
+        # fixed set of other portfolios instead of the user's own. Reuses
+        # simple_returns/ai_log/rest_factor_252/the shock values already
+        # computed in the Computation block earlier in the script -- nothing
+        # new pulled or recomputed globally, just re-run per preset. Only
+        # available inside this same `else` (i.e. only once the repricing
+        # sim has actually been run), consistent with everything else here.
+        # --------------------------------------------------------------------
+        st.markdown('<div class="section-label">MORE OPTIONS</div>', unsafe_allow_html=True)
+        with st.expander("Other portfolios' repricing", expanded=False, key="repricing_gallery_expander"):
+            st.caption(
+                "Same projection math as Step 5 above, run on a few other portfolios from this "
+                "app's sector picker, so you can see how their repricing exposure compares to yours."
+            )
+            repricing_preset_names = [
+                name for name in ("Semiconductors", "Healthcare Core", "Classic Investor", "AI Basket")
+                if name in SECTOR_PRESETS and all(t in universe for t in SECTOR_PRESETS[name]["tickers"])
+            ]
+            if repricing_preset_names:
+                repricing_pick = st.selectbox(
+                    "Pick a portfolio",
+                    options=repricing_preset_names,
+                    format_func=lambda name: f"{name} ({SECTOR_PRESETS[name]['tag']})",
+                    key="repricing_preset_pick",
+                    label_visibility="collapsed",
+                )
+                repricing_preset = SECTOR_PRESETS[repricing_pick]
+                repricing_frac = {t: w / 100.0 for t, w in repricing_preset["weights"].items()}
+                repricing_log = fl.to_log_returns(
+                    fl.build_portfolio_simple_returns(simple_returns, repricing_frac)
+                )
+                repricing_two_factor = fl.two_factor_regress(repricing_log, ai_log, rest_factor_252)
+                repricing_proj_no_bubble = fl.project_scenario(
+                    repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
+                    ai_shock_no_bubble, rest_shock_no_bubble,
+                ) * 100
+                repricing_proj_2022 = fl.project_scenario(
+                    repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
+                    m2_shocks["2022_ai_shock"], m2_shocks["2022_rest_shock"],
+                ) * 100
+                repricing_proj_2008 = fl.project_scenario(
+                    repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
+                    m2_shocks["gfc_ai_shock"], m2_shocks["gfc_rest_shock"],
+                ) * 100
+                repricing_proj_dotcom = fl.project_scenario(
+                    repricing_two_factor["beta_ai"], repricing_two_factor["beta_rest"],
+                    m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"],
+                ) * 100
+                fig_repricing = render_scenario_chart(
+                    repricing_proj_no_bubble, repricing_proj_2022, repricing_proj_2008,
+                    repricing_proj_dotcom, spy_crash_refs=None,
+                )
+                st.plotly_chart(fig_repricing, theme=None, width="stretch", config=PLOTLY_CONFIG,
+                                 key="repricing_preset_chart")
+
 # ============================================================================
 # Bonus panel: rolling beta through time
 # ============================================================================
@@ -1693,20 +2213,3 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ============================================================================
-# Smooth-scroll -- fires once, on the same run that just consumed
-# scroll_target (see the "animate_now = st.session_state.pop(...)" line near
-# the top), so a newly-unlocked step scrolls into view without the user
-# having to scroll down manually. st.html is not iframed (unlike
-# st.components.v1.html), so this can address the real document directly.
-# ============================================================================
-if scroll_target is not None:
-    st.html(
-        f"""<script>
-        setTimeout(function() {{
-            var el = document.getElementById("step-anchor-{scroll_target}");
-            if (el) {{ el.scrollIntoView({{behavior: "smooth", block: "start"}}); }}
-        }}, 100);
-        </script>""",
-        unsafe_allow_javascript=True,
-    )
