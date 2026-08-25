@@ -1010,6 +1010,18 @@ st.markdown(f"""
     code {{ color: {LIME} !important; background-color: {BG_CARD} !important; border-radius: 0; font-family: {MONO_STACK} !important; }}
     [data-testid="stSidebar"] {{ background-color: {SIDEBAR_BG}; border-right: 1px solid {PANEL_BORDER}; }}
     [data-testid="stSidebar"] * {{ color: {TEXT_PRIMARY_DIM} !important; }}
+    /* Sidebar section headers (v3.4) -- the sidebar was the one area of the
+       app that never got the HUD treatment; its "**Diagnostics**" /
+       "**Quick presets**" / "**Supported universe**" headers were plain bold
+       markdown text. Targeting the sidebar's <strong> tags directly (rather
+       than adding a custom class at each call site) turns all three into the
+       same "// LABEL" monospace eyebrow style as .section-label in the main
+       content, for free, without touching the sidebar's Python structure. */
+    [data-testid="stSidebar"] strong {{
+        font-family: {MONO_STACK} !important; text-transform: uppercase;
+        letter-spacing: 1.5px; font-size: 0.78rem; color: {TEXT_MUTED} !important;
+    }}
+    [data-testid="stSidebar"] strong::before {{ content: "// "; }}
 
     /* HUD panel frame -- every st.container(border=True) in the app (step
        boxes, the donut card, sector/side-by-side cards, the hero card) goes
@@ -1570,15 +1582,21 @@ with st.container(border=True):
 
 with st.sidebar:
     st.markdown("**Diagnostics**")
-    st.markdown(
-        f'<div class="diag-line">Gate check: <span class="diag-ok">PASS</span></div>'
-        f'<div class="diag-subcaption">Confirms the {len(universe)}-ticker price data is complete '
-        f'and internally consistent.</div>'
-        f'<div class="diag-line">SPY 2022 drawdown: {gate_drawdown * 100:.2f}%</div>'
-        f'<div class="diag-line">Universe: {len(universe)} tickers</div>'
-        f'<div class="diag-line">Source: data/prices.db</div>',
-        unsafe_allow_html=True,
-    )
+    # Bordered container so this readout picks up the same corner-bracket HUD
+    # frame as every card in the main content (div[data-testid="stVerticalBlockBorderWrapper"]
+    # styling, already global) -- the sidebar's other two sections stay
+    # frameless on purpose, so the bracket treatment reads as "this is a live
+    # status readout", not just decoration repeated on every sidebar block.
+    with st.container(border=True):
+        st.markdown(
+            f'<div class="diag-line">Gate check: <span class="diag-ok">PASS</span></div>'
+            f'<div class="diag-subcaption">Confirms the {len(universe)}-ticker price data is complete '
+            f'and internally consistent.</div>'
+            f'<div class="diag-line">SPY 2022 drawdown: {gate_drawdown * 100:.2f}%</div>'
+            f'<div class="diag-line">Universe: {len(universe)} tickers</div>'
+            f'<div class="diag-line">Source: data/prices.db</div>',
+            unsafe_allow_html=True,
+        )
     st.markdown("---")
 
     st.markdown("**Quick presets**")
@@ -2047,7 +2065,7 @@ else:
         # clipboard write below succeeding) and best-effort copies the full URL
         # via the same unsafe_allow_javascript pattern the "_flash_copy_link"
         # consumption block near the top of this file already uses.
-        if st.button("🔗 Copy shareable link", key="copy_share_link"):
+        if st.button("Copy shareable link", key="copy_share_link"):
             st.query_params["p"] = encode_portfolio_query(weights_pct_map)
             st.session_state["_flash_copy_link"] = True
             st.rerun()
