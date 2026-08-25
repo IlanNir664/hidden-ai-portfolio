@@ -48,29 +48,52 @@ M3_TABLE_PATH = PROJECT_ROOT / "outputs" / "m3_scenario_table.csv"
 
 REFERENCE_PORTFOLIOS = ["QQQ", "SPY", "VT", "60/40", "RSP"]
 
-# --- Dark fintech palette (app chrome + in-app charts only -- see module docstring) ---
-BG_APP = "#0E0F0C"
-BG_CARD = "#1A1B17"
-LIME = "#C8F135"          # primary accent: positive numbers, user's own series, main action
-LIME_DIM = "rgba(200,241,53,0.45)"  # dimmer tint for the user's "direct weight" half-bar
-INDIGO = "#5B4CF5"        # secondary accent, used sparingly (dot-com-style scenario series)
-AMBER = "#E3A83B"         # 2022-style scenario series
-NEG_RED = "#F4534A"
-TEXT_PRIMARY = "#F4F5F0"
-TEXT_MUTED = "#9A9C93"
-MUTED_GRAY_1 = "#5C5E56"  # reference-portfolio "direct weight" bars
-MUTED_GRAY_2 = "#8B8D82"  # reference-portfolio dots/lines (tradeoff chart, rolling beta)
-SAGE = "#6FA287"          # reference-portfolio "effective exposure" bars -- distinct hue from
-                          # the muted-gray "direct weight" bars, so the direct-vs-effective gap
-                          # (this chart's entire point) stays visually legible
-GRIDLINE = "rgba(154,156,147,0.15)"
+# --- Tactical-telemetry / x-ray-scan palette (app chrome + in-app charts only --
+# see module docstring). v3: replaces v2's dark-fintech lime palette with a
+# green-phosphor HUD look -- near-black CRT background, terminal-green primary
+# accent, a cyan "scan" secondary for the one series that needs to read as
+# distinct from green (the dot-com-style scenario line), amber/red kept as the
+# universal caution/danger colors. Zero border-radius anywhere in the CSS below
+# is deliberate (see the style block) -- this palette is built for that flat,
+# 90-degree-corners HUD-panel look, not the old pill/rounded-corner shapes.
+BG_APP = "#0A0D0A"
+BG_CARD = "#111712"
+GREEN = "#39FF6E"          # primary accent: positive numbers, user's own series, main action
+GREEN_DIM = "rgba(57,255,110,0.45)"  # dimmer tint for the user's "direct weight" half-bar
+GREEN_BRIGHT = "#8FFFB8"   # hover/pressed state for the primary green CTA
+CYAN = "#3EE8FF"           # secondary accent, used sparingly (dot-com-style scenario series)
+AMBER = "#E8A93C"          # 2022-style scenario series / caution
+NEG_RED = "#FF4433"        # danger / 2008-style scenario series
+TEXT_PRIMARY = "#EAF5EC"
+TEXT_MUTED = "#6F8C7A"
+MUTED_GRAY_1 = "#3E4A3F"   # reference-portfolio "direct weight" bars
+MUTED_GRAY_2 = "#7C9585"   # reference-portfolio dots/lines (tradeoff chart, rolling beta)
+SAGE = "#4FAE7A"           # reference-portfolio "effective exposure" bars -- distinct enough
+                          # from the primary GREEN and from MUTED_GRAY_1/2 that the
+                          # direct-vs-effective gap (this chart's entire point) stays legible
+GRIDLINE = "rgba(111,140,122,0.15)"
 FONT_STACK = "'Inter','Space Grotesk','Segoe UI',system-ui,-apple-system,sans-serif"
+# Technical/telemetry type -- labels, badges, step numbers, data tables. System-
+# local monospace stack only (offline rule, same as FONT_STACK above).
+MONO_STACK = "'Cascadia Mono','Consolas','SFMono-Regular','Menlo','Courier New',monospace"
+# Panel/chrome tones -- named (not just inlined as hex) so the CSS block below
+# reads as "what role does this color play" rather than a wall of hex literals.
+TEXT_PRIMARY_DIM = "#D8E6DA"  # body prose color (p/li/label/span) -- a notch dimmer than TEXT_PRIMARY
+PANEL_BORDER = "#1C2B20"      # thin border on every flat HUD panel (cards, inputs, alerts)
+PANEL_BG_HOVER = "#101A13"    # hover/active fill for panels and secondary buttons
+SIDEBAR_BG = "#060A07"
+
+# Backward-compatible aliases -- kept so the rest of this file (chart builders,
+# CSS block) can be updated incrementally without one giant simultaneous rename.
+LIME = GREEN
+LIME_DIM = GREEN_DIM
+INDIGO = CYAN
 
 # Page-background "atmosphere" (CSS only -- see the html/body/.stApp rule and the
 # .stApp::before diagonal-line rule below). v2: sharper and more designed than the
 # original soft-glow version -- a real blueprint/terminal grid with two tiers,
-# one focused lime glow (harder falloff than before), a vignette, and a single
-# diagonal lime "laser edge" behind the hero. All values chosen to stay well
+# one focused green glow (harder falloff than before), a vignette, and a single
+# diagonal green "laser edge" behind the hero. All values chosen to stay well
 # clear of the readability floor (muted-gray captions on the flat charcoal) --
 # see the contrast check run during this task for the numbers. The indigo glow
 # from v1 is dropped entirely -- with the grid and diagonal line added, a second
@@ -90,9 +113,9 @@ BG_DIAGONAL_GLOW_OPACITY = 0.10  # the soft halo running parallel to it
 # two adjacent same-group segments still visually separate (e.g. NVDA next to
 # MSFT, or TLT next to GLD). Cycled per group in the order encountered, not
 # hashed, so shade assignment is stable and predictable within one render.
-DONUT_LIME_SHADES = ["#C8F135", "#96C42A", "#E6FF8C", "#7A9E20"]
-DONUT_GRAY_SHADES = ["#9A9C93", "#6E706A", "#B8BAB0", "#54564F"]
-DONUT_SAGE_SHADES = ["#6FA287", "#4C7862", "#8FC2A8", "#3D5F4E"]
+DONUT_LIME_SHADES = ["#39FF6E", "#28C455", "#8CFFB2", "#1C8F3D"]
+DONUT_GRAY_SHADES = ["#7C9585", "#526354", "#A6C2AE", "#3A4A3D"]
+DONUT_SAGE_SHADES = ["#4FAE7A", "#357854", "#7FD1A3", "#295E3F"]
 DONUT_GROUP_LABELS = {
     "ai": "AI basket member",
     "zero": "No equity exposure (bond/Treasury/commodity)",
@@ -334,11 +357,11 @@ def _apply_base_layout(fig: go.Figure, y_title: str = None, x_title: str = None,
     fig.update_layout(
         paper_bgcolor=BG_CARD,
         plot_bgcolor=BG_CARD,
-        font=dict(color=TEXT_MUTED, family=FONT_STACK, size=12),
+        font=dict(color=TEXT_MUTED, family=MONO_STACK, size=12),
         margin=dict(t=top_margin, l=56, r=24, b=bottom_margin),
         height=height,
         showlegend=False,
-        hoverlabel=dict(bgcolor="#23251E", font_color=TEXT_PRIMARY, font_family=FONT_STACK, bordercolor=LIME),
+        hoverlabel=dict(bgcolor="#101A13", font_color=TEXT_PRIMARY, font_family=MONO_STACK, bordercolor=LIME),
         xaxis=dict(showgrid=False, zeroline=False, showline=True, linecolor="rgba(154,156,147,0.3)",
                     tickfont=dict(color=TEXT_MUTED), automargin=True),
         yaxis=dict(showgrid=True, gridcolor=GRIDLINE, zeroline=False, showline=False,
@@ -375,7 +398,7 @@ def render_concentration_history_chart(history_df: pd.DataFrame):
         textposition="top center", textfont=dict(color=TEXT_PRIMARY, size=12),
         line=dict(color=LIME, width=2.5), marker=dict(color=LIME, size=8, line=dict(color=BG_CARD, width=1.5)),
         fill="tozeroy",
-        fillgradient=dict(type="vertical", colorscale=[[0, "rgba(200,241,53,0.32)"], [1, "rgba(200,241,53,0)"]]),
+        fillgradient=dict(type="vertical", colorscale=[[0, "rgba(57,255,110,0.32)"], [1, "rgba(57,255,110,0)"]]),
         customdata=years, hovertemplate="%{customdata}<br>Top-10 share: %{y:.1f}%<extra></extra>",
     )
     dotcom_idx = years.index(2000)
@@ -431,7 +454,7 @@ def render_realized_return_chart(user_indexed: pd.Series, spy_indexed: pd.Series
     fig.add_scatter(
         x=user_indexed.index, y=user_indexed.values, mode="lines",
         line=dict(color=LIME, width=2.5), fill="tonexty",
-        fillgradient=dict(type="vertical", colorscale=[[0, "rgba(200,241,53,0.32)"], [1, "rgba(200,241,53,0)"]]),
+        fillgradient=dict(type="vertical", colorscale=[[0, "rgba(57,255,110,0.32)"], [1, "rgba(57,255,110,0)"]]),
         hovertemplate="%{x|%Y-%m-%d}<br>Your portfolio: %{y:.1f}<extra></extra>",
     )
     fig.add_annotation(x=user_indexed.index[-1], y=user_indexed.values[-1], text=f"{user_return_pct:+.1f}%",
@@ -498,7 +521,7 @@ def render_scenario_chart(no_bubble_pct: float, style_2022_pct: float, style_200
     # Emphasis (not recolor) on the dot-com bar, still the deepest single shock of
     # the three crash scenarios -- a brighter outline on just that bar, none on
     # the others.
-    line_colors = ["rgba(0,0,0,0)", "rgba(0,0,0,0)", "rgba(0,0,0,0)", "#8B7FFF"]
+    line_colors = ["rgba(0,0,0,0)", "rgba(0,0,0,0)", "rgba(0,0,0,0)", "#3EE8FF"]
     line_widths = [0, 0, 0, 2.5]
 
     fig = go.Figure(go.Bar(
@@ -562,7 +585,7 @@ def render_tradeoff_chart(m3_reference: dict, user_loss_pct: float, user_gain_pc
                      marker=dict(size=24, color=LIME, opacity=0.30), hoverinfo="skip")
     fig.add_scatter(
         x=[user_loss_pct], y=[user_gain_pct], mode="markers+text", text=["YOU"], textposition="top center",
-        textfont=dict(color=LIME, size=13, family=FONT_STACK),
+        textfont=dict(color=LIME, size=13, family=MONO_STACK),
         marker=dict(size=15, color=LIME, symbol="diamond", line=dict(color=TEXT_PRIMARY, width=1.5)),
         hovertemplate="YOU<br>Dot-com loss: %{x:.1f}%<br>No-bubble gain: %{y:.1f}%<extra></extra>",
     )
@@ -587,7 +610,7 @@ def render_rolling_beta_chart(user_rolling: pd.Series, spy_rolling: pd.Series, u
     fig.add_scatter(
         x=user_rolling.index, y=user_rolling.values * 100, mode="lines",
         line=dict(color=LIME, width=2.5), fill="tozeroy",
-        fillgradient=dict(type="vertical", colorscale=[[0, "rgba(200,241,53,0.32)"], [1, "rgba(200,241,53,0)"]]),
+        fillgradient=dict(type="vertical", colorscale=[[0, "rgba(57,255,110,0.32)"], [1, "rgba(57,255,110,0)"]]),
         hovertemplate="%{x|%Y-%m-%d}<br>" + user_label + " beta: %{y:.0f}%<extra></extra>",
     )
     fig.add_annotation(x=user_rolling.index[-1], y=user_rolling.values[-1] * 100, text=user_label,
@@ -648,7 +671,7 @@ def render_portfolio_donut(weights: dict, beta_pct: float, height: int = 340,
         labels=tickers, values=weight_pcts, hole=0.55, sort=False, direction="clockwise",
         marker=dict(colors=colors, line=dict(color=BG_CARD, width=2)),
         text=outside_text, textinfo="text", textposition=text_positions,
-        textfont=dict(color=TEXT_PRIMARY, size=11, family=FONT_STACK),
+        textfont=dict(color=TEXT_PRIMARY, size=11, family=MONO_STACK),
         customdata=list(zip(tickers, hover_group_labels)),
         hovertemplate="%{customdata[0]}<br>Weight: %{value:.1f}%<br>%{customdata[1]}<extra></extra>",
         showlegend=False,
@@ -657,20 +680,20 @@ def render_portfolio_donut(weights: dict, beta_pct: float, height: int = 340,
     if reveal:
         fig.add_annotation(
             text=f"{beta_pct:.0f}% AI", x=0.5, y=0.56, xref="paper", yref="paper",
-            showarrow=False, font=dict(color=LIME, size=number_font_size, family=FONT_STACK),
+            showarrow=False, font=dict(color=LIME, size=number_font_size, family=MONO_STACK),
         )
         fig.add_annotation(
             text="effectively AI", x=0.5, y=0.44, xref="paper", yref="paper",
-            showarrow=False, font=dict(color=TEXT_MUTED, size=label_font_size, family=FONT_STACK),
+            showarrow=False, font=dict(color=TEXT_MUTED, size=label_font_size, family=MONO_STACK),
         )
     else:
         fig.add_annotation(
             text="?", x=0.5, y=0.56, xref="paper", yref="paper",
-            showarrow=False, font=dict(color=TEXT_MUTED, size=number_font_size, family=FONT_STACK),
+            showarrow=False, font=dict(color=TEXT_MUTED, size=number_font_size, family=MONO_STACK),
         )
         fig.add_annotation(
             text="tap Calculate to reveal", x=0.5, y=0.44, xref="paper", yref="paper",
-            showarrow=False, font=dict(color=TEXT_MUTED, size=label_font_size, family=FONT_STACK),
+            showarrow=False, font=dict(color=TEXT_MUTED, size=label_font_size, family=MONO_STACK),
         )
 
     fig.update_layout(
@@ -678,7 +701,7 @@ def render_portfolio_donut(weights: dict, beta_pct: float, height: int = 340,
         showlegend=False,
         margin=dict(t=margin, l=margin, r=margin, b=margin),
         height=height,
-        font=dict(family=FONT_STACK, color=TEXT_MUTED),
+        font=dict(family=MONO_STACK, color=TEXT_MUTED),
     )
     return fig
 
@@ -767,19 +790,20 @@ st.set_page_config(page_title="The Portfolio X-Ray", page_icon="\U0001fa7b", lay
 st.markdown(f"""
 <style>
     /* Offline-only: no external font/asset requests (golden rule 2 -- app must run
-       fully offline from a clean clone). System-local geometric-sans stack only. */
-    /* Background "atmosphere" v2 -- sharp blueprint grid (two tiers), one focused
-       lime glow, and a vignette, all CSS-only and fixed so none of it scrolls
-       with content. Cards/charts paint a fully opaque BG_CARD on top, so none of
-       this shows through a card -- it only lives in the page gaps. The diagonal
-       "laser edge" is a separate .stApp::before rule below (needs its own box to
-       stay bounded to the upper-right quadrant and its own layer to add a glow
-       band alongside the sharp line -- awkward to fold into this list). */
+       fully offline from a clean clone). System-local fonts only: FONT_STACK for
+       macro typography (titles, section headers, body prose) and MONO_STACK for
+       micro/telemetry typography (labels, badges, data readouts) -- see the
+       "Tactical Telemetry" design system this v3 pass switched to (module-level
+       palette comment above). Heavy-sans-vs-monospace IS the intended contrast;
+       monospace is deliberately NOT applied to prose/captions, only to short
+       labels and numbers, so long explanatory text stays readable.
+       Zero border-radius everywhere below is deliberate too, not an oversight --
+       this is a flat, 90-degree-corner HUD-panel look, not the old pill shapes. */
     html, body, .stApp {{
         background-color: {BG_APP}; color: {TEXT_PRIMARY};
         background-image:
             radial-gradient(ellipse 70% 65% at 50% 50%, transparent 55%, rgba(0,0,0,{BG_VIGNETTE_OPACITY}) 100%),
-            radial-gradient(circle at 100% 0%, rgba(200,241,53,{BG_GLOW_LIME_OPACITY}) 0%, rgba(200,241,53,0) {BG_GLOW_LIME_RADIUS_PCT}%),
+            radial-gradient(circle at 100% 0%, rgba(57,255,110,{BG_GLOW_LIME_OPACITY}) 0%, rgba(57,255,110,0) {BG_GLOW_LIME_RADIUS_PCT}%),
             repeating-linear-gradient(to right, rgba(255,255,255,{BG_GRID_MAJOR_OPACITY}) 0 1px, transparent 1px {BG_GRID_MAJOR_SPACING_PX}px),
             repeating-linear-gradient(to bottom, rgba(255,255,255,{BG_GRID_MAJOR_OPACITY}) 0 1px, transparent 1px {BG_GRID_MAJOR_SPACING_PX}px),
             repeating-linear-gradient(to right, rgba(255,255,255,{BG_GRID_FINE_OPACITY}) 0 1px, transparent 1px {BG_GRID_FINE_SPACING_PX}px),
@@ -789,28 +813,45 @@ st.markdown(f"""
         background-repeat: no-repeat, no-repeat, repeat, repeat, repeat, repeat;
         background-attachment: fixed, fixed, fixed, fixed, fixed, fixed;
     }}
-    /* The single diagonal lime "laser edge" -- a fixed pseudo-element bounded to
-       roughly the upper-right quadrant (own box, not a full-page gradient layer)
-       so it stays a single accent line, not a wash. Two stacked gradients inside
-       it: a wide, low-opacity band for the soft glow and a 2px high-opacity band
-       for the sharp edge -- a "blurred parallel line" rather than filter: blur(),
-       which keeps this cheap (no blur compositing cost) despite being fixed.
-       z-index: -1 keeps it behind every real element in .stApp regardless of
-       whether .stApp forms its own stacking context, since the pseudo-element and
-       the rest of the app's content share that same context either way -- it can
-       never end up in front of text or cards. Bounded to 70vw/58vh and anchored at
-       top:0/right:0 (never past the viewport edge), so it cannot introduce a
-       horizontal scrollbar the way an oversized or mis-anchored box could. */
+    /* The diagonal green "laser edge" -- unchanged mechanism from v2 (fixed
+       pseudo-element bounded to the upper-right quadrant), just recolored. See
+       the historical comment this replaced for why it's built this way (bounded
+       box + two stacked gradients instead of filter: blur(), z-index: -1). */
     .stApp::before {{
         content: "";
         position: fixed;
         top: 0; right: 0;
         width: 70vw; height: 58vh;
         background-image:
-            linear-gradient(-30deg, transparent calc(50% - 16px), rgba(200,241,53,{BG_DIAGONAL_GLOW_OPACITY}) 50%, transparent calc(50% + 16px)),
-            linear-gradient(-30deg, transparent calc(50% - 1px), rgba(200,241,53,{BG_DIAGONAL_LINE_OPACITY}) 50%, transparent calc(50% + 1px));
+            linear-gradient(-30deg, transparent calc(50% - 16px), rgba(57,255,110,{BG_DIAGONAL_GLOW_OPACITY}) 50%, transparent calc(50% + 16px)),
+            linear-gradient(-30deg, transparent calc(50% - 1px), rgba(57,255,110,{BG_DIAGONAL_LINE_OPACITY}) 50%, transparent calc(50% + 1px));
         pointer-events: none;
         z-index: -1;
+    }}
+    /* CRT/x-ray scanline texture (v3, new) -- a full-viewport, fixed, very-low-
+       opacity repeating horizontal-line layer, the classic "phosphor scan" cue.
+       Cheap: no blur, no per-frame JS, just a slow background-position drift via
+       the scanlineDrift keyframe below so it reads as faintly alive rather than
+       static wallpaper. z-index: -1, same stacking-context reasoning as
+       .stApp::before -- always behind real content, never in front of a card. */
+    .stApp::after {{
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image: repeating-linear-gradient(
+            0deg,
+            rgba(57,255,110,0.05) 0px,
+            rgba(57,255,110,0.05) 1px,
+            transparent 1px,
+            transparent 3px
+        );
+        pointer-events: none;
+        z-index: -1;
+        animation: scanlineDrift 9s ease-in-out infinite alternate;
+    }}
+    @keyframes scanlineDrift {{
+        from {{ background-position-y: 0px; }}
+        to {{ background-position-y: 6px; }}
     }}
     * {{ font-family: {FONT_STACK} !important; }}
     /* Streamlit renders its chevrons/arrows as ligature text in a bundled local icon
@@ -821,29 +862,38 @@ st.markdown(f"""
     [data-testid="stIconMaterial"] {{ font-family: "Material Symbols Rounded" !important; }}
 
     h1, h2, h3, h4, h5, h6 {{ color: {TEXT_PRIMARY} !important; font-weight: 700; letter-spacing: -0.02em; }}
-    p, li, label, span, .stMarkdown {{ color: #D6D8CF !important; }}
+    p, li, label, span, .stMarkdown {{ color: {TEXT_PRIMARY_DIM} !important; }}
     a {{ color: {LIME} !important; }}
     .stCaption, [data-testid="stCaptionContainer"] {{ color: {TEXT_MUTED} !important; }}
 
-    div[data-testid="stMetricValue"] {{ color: {LIME} !important; font-weight: 800; }}
-    div[data-testid="stMetricLabel"] {{ color: {TEXT_MUTED} !important; text-transform: uppercase; font-size: 0.72rem !important; letter-spacing: 1px; }}
-    div[data-testid="stMetric"] {{ background: {BG_CARD}; border: none; border-radius: 16px; padding: 14px 18px; }}
+    div[data-testid="stMetricValue"] {{ color: {LIME} !important; font-weight: 800; font-family: {MONO_STACK} !important; font-variant-numeric: tabular-nums; }}
+    div[data-testid="stMetricLabel"] {{ color: {TEXT_MUTED} !important; text-transform: uppercase; font-size: 0.72rem !important; letter-spacing: 1px; font-family: {MONO_STACK} !important; }}
+    div[data-testid="stMetric"] {{ background: {BG_CARD}; border: 1px solid {PANEL_BORDER}; border-radius: 0; padding: 14px 18px; }}
 
+    /* Secondary/utility buttons -- flat panel look (zero radius, thin border),
+       monospace + uppercase label, bracketed like a terminal menu option
+       ("[ + ADD ]") via ::before/::after content on the <button> itself, so no
+       Python call site needs to change its label text. */
     .stButton button {{
-        background-color: {BG_CARD}; color: {LIME}; border: 1px solid #2A2C24; border-radius: 999px;
-        padding: 6px 20px; font-weight: 600; transition: all 0.15s ease;
+        background-color: {BG_CARD}; color: {LIME}; border: 1px solid {PANEL_BORDER}; border-radius: 0;
+        padding: 6px 20px; font-weight: 600; font-family: {MONO_STACK} !important;
+        text-transform: uppercase; letter-spacing: 0.6px; transition: all 0.15s ease;
     }}
-    .stButton button:hover {{ background-color: #23251E; border-color: {LIME}; box-shadow: 0 0 16px rgba(200,241,53,0.25); }}
+    .stButton button::before {{ content: "[ "; opacity: 0.65; }}
+    .stButton button::after {{ content: " ]"; opacity: 0.65; }}
+    .stButton button:hover {{ background-color: {PANEL_BG_HOVER}; border-color: {LIME}; box-shadow: 0 0 16px rgba(57,255,110,0.25); }}
 
     /* Shared "primary CTA" button style -- one rule block, applied to every
-       key that needs the loud treatment (solid lime fill, black text, large,
-       centered) instead of the muted outline every other .stButton uses.
+       key that needs the loud treatment (solid green fill, near-black text,
+       large, centered) instead of the muted outline every other .stButton uses.
        Currently: Step 0's continue button, the "Calculate my AI %" button
        (gates Step 2/4), and the "Run repricing simulation" button (gates
        Step 5/6) -- same class, same rules, just a different label text and
        session_state key at each call site. Add a new key to this selector
        list rather than writing a new rule block if a fourth CTA button is
-       ever needed. */
+       ever needed. Prefixed ">>> " instead of the secondary buttons' "[ ]"
+       brackets -- a forward/action marker for "the next step", vs. the
+       brackets' "pick one of these" framing on ordinary controls. */
     /* width:fit-content + margin:auto (not display:flex + width:100%) --
        forcing the element-container to width:100% made the button itself
        stretch to fill it (Streamlit sizes a plain st.button to 100% of its
@@ -854,104 +904,134 @@ st.markdown(f"""
         width: fit-content; margin: 6px auto 0 auto;
     }}
     .st-key-step0_continue button, .st-key-calc_ai_pct button, .st-key-run_repricing_sim button {{
-        background-color: {LIME} !important; color: #0E0F0C !important;
-        border: none !important; border-radius: 999px;
+        background-color: {LIME} !important; color: {BG_APP} !important;
+        border: none !important; border-radius: 0;
         padding: 16px 44px !important; font-size: 1.25rem; font-weight: 700;
-        box-shadow: 0 0 22px rgba(200,241,53,0.4);
+        font-family: {MONO_STACK} !important; text-transform: uppercase; letter-spacing: 1px;
+        box-shadow: 0 0 22px rgba(57,255,110,0.4);
     }}
+    .st-key-step0_continue button::before, .st-key-calc_ai_pct button::before, .st-key-run_repricing_sim button::before {{ content: ">>> "; opacity: 1; }}
+    .st-key-step0_continue button::after, .st-key-calc_ai_pct button::after, .st-key-run_repricing_sim button::after {{ content: ""; }}
     .st-key-step0_continue button:hover, .st-key-calc_ai_pct button:hover, .st-key-run_repricing_sim button:hover {{
-        background-color: #DFFF6B !important; box-shadow: 0 0 30px rgba(200,241,53,0.6);
+        background-color: {GREEN_BRIGHT} !important; box-shadow: 0 0 30px rgba(57,255,110,0.6);
     }}
     .st-key-step0_continue button p, .st-key-calc_ai_pct button p, .st-key-run_repricing_sim button p {{
-        color: #0E0F0C !important; font-size: 1.25rem; font-weight: 700;
+        color: {BG_APP} !important; font-size: 1.25rem; font-weight: 700; font-family: {MONO_STACK} !important;
     }}
 
-    [data-testid="stExpander"] {{ border: none; background-color: {BG_CARD}; border-radius: 16px; }}
+    [data-testid="stExpander"] {{ border: 1px solid {PANEL_BORDER}; background-color: {BG_CARD}; border-radius: 0; }}
 
-    /* Sector-gallery expander -- same lime CTA family as the Calculate/Run
+    /* Sector-gallery expander -- same green CTA family as the Calculate/Run
        buttons above (scoped to this one expander via its key), just a
-       smaller pill since it's a secondary, optional path rather than the
+       smaller tag since it's a secondary, optional path rather than the
        main flow. The clickable region is the <summary>, not the whole
        expander shell, so the CTA look only applies there. */
     .st-key-sector_gallery_expander [data-testid="stExpander"] {{
-        background-color: transparent;
+        background-color: transparent; border: none;
     }}
     .st-key-sector_gallery_expander summary,
     .st-key-repricing_gallery_expander summary {{
-        background-color: {LIME} !important; border-radius: 999px !important;
-        padding: 8px 18px !important; box-shadow: 0 0 14px rgba(200,241,53,0.35);
+        background-color: {LIME} !important; border-radius: 0 !important;
+        padding: 8px 18px !important; box-shadow: 0 0 14px rgba(57,255,110,0.35);
         display: inline-flex !important; width: fit-content !important; margin: 0 auto !important;
+        font-family: {MONO_STACK} !important;
     }}
+    .st-key-sector_gallery_expander summary::before, .st-key-repricing_gallery_expander summary::before {{ content: ">>> "; }}
     .st-key-sector_gallery_expander summary:hover,
     .st-key-repricing_gallery_expander summary:hover {{
-        background-color: #DFFF6B !important; box-shadow: 0 0 20px rgba(200,241,53,0.5);
+        background-color: {GREEN_BRIGHT} !important; box-shadow: 0 0 20px rgba(57,255,110,0.5);
     }}
     .st-key-sector_gallery_expander summary p,
     .st-key-repricing_gallery_expander summary p {{
-        color: #0E0F0C !important; font-weight: 700; font-size: 0.95rem;
+        color: {BG_APP} !important; font-weight: 700; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.6px;
     }}
     .st-key-sector_gallery_expander summary [data-testid="stIconMaterial"],
     .st-key-repricing_gallery_expander summary [data-testid="stIconMaterial"] {{
-        color: #0E0F0C !important;
+        color: {BG_APP} !important;
     }}
     .st-key-repricing_gallery_expander [data-testid="stExpander"] {{
-        background-color: transparent;
+        background-color: transparent; border: none;
     }}
 
-    /* Sector-preset dropdowns -- a lime outline so they visually read as an
+    /* Sector-preset dropdowns -- a green outline so they visually read as an
        interactive control instead of a flat label (otherwise looks like
        plain text with no obvious affordance to open more options). */
     .st-key-sector_preset_pick [data-testid="stSelectbox"] [role="group"],
     .st-key-repricing_preset_pick [data-testid="stSelectbox"] [role="group"] {{
-        border: 2px solid {LIME} !important; border-radius: 10px !important;
-        box-shadow: 0 0 10px rgba(200,241,53,0.25);
+        border: 2px solid {LIME} !important; border-radius: 0 !important;
+        box-shadow: 0 0 10px rgba(57,255,110,0.25);
     }}
-    .stAlert {{ background-color: {BG_CARD} !important; border: 1px solid #2A2C24; border-radius: 14px; }}
-    [data-testid="stDataFrame"], [data-testid="stTable"], [data-testid="stDataEditor"] {{ border: none; border-radius: 14px; overflow: hidden; }}
-    hr {{ border-color: #23251E; }}
-    code {{ color: {LIME} !important; background-color: {BG_CARD} !important; border-radius: 6px; }}
-    [data-testid="stSidebar"] {{ background-color: #0B0C09; border-right: 1px solid {BG_CARD}; }}
-    [data-testid="stSidebar"] * {{ color: #D6D8CF !important; }}
+    .stAlert {{ background-color: {BG_CARD} !important; border: 1px solid {PANEL_BORDER}; border-radius: 0; }}
+    [data-testid="stDataFrame"], [data-testid="stTable"], [data-testid="stDataEditor"] {{ border: 1px solid {PANEL_BORDER}; border-radius: 0; overflow: hidden; }}
+    hr {{ border-color: {PANEL_BG_HOVER}; }}
+    code {{ color: {LIME} !important; background-color: {BG_CARD} !important; border-radius: 0; font-family: {MONO_STACK} !important; }}
+    [data-testid="stSidebar"] {{ background-color: {SIDEBAR_BG}; border-right: 1px solid {PANEL_BORDER}; }}
+    [data-testid="stSidebar"] * {{ color: {TEXT_PRIMARY_DIM} !important; }}
 
+    /* HUD panel frame -- every st.container(border=True) in the app (step
+       boxes, the donut card, sector/side-by-side cards, the hero card) goes
+       through this one selector, so one change here restyles all of them.
+       Flat panel (zero radius, thin all-round border, no more left-accent-bar
+       convention) with a two-corner bracket frame layered on via ::before/
+       ::after -- the same "targeting reticle corner" language as the
+       reference screenshots this redesign is modeled on. position: relative
+       is required so the absolutely-positioned corner brackets anchor to
+       this box instead of the page. */
     div[data-testid="stVerticalBlockBorderWrapper"] {{
-        border: none !important; border-left: 4px solid {LIME} !important;
-        border-radius: 20px !important; background: {BG_CARD}; padding: 6px 8px;
+        position: relative;
+        border: 1px solid {PANEL_BORDER} !important;
+        border-radius: 0 !important; background: {BG_CARD}; padding: 10px 14px;
+    }}
+    div[data-testid="stVerticalBlockBorderWrapper"]::before,
+    div[data-testid="stVerticalBlockBorderWrapper"]::after {{
+        content: ""; position: absolute; width: 16px; height: 16px; pointer-events: none;
+    }}
+    div[data-testid="stVerticalBlockBorderWrapper"]::before {{
+        top: -1px; left: -1px; border-top: 2px solid {LIME}; border-left: 2px solid {LIME};
+    }}
+    div[data-testid="stVerticalBlockBorderWrapper"]::after {{
+        bottom: -1px; right: -1px; border-bottom: 2px solid {LIME}; border-right: 2px solid {LIME};
     }}
     /* Tighten the dead space between steps (~30% less than the prior default gap)
        so the sequence reads as connected sections rather than isolated islands. */
     div[data-testid="stVerticalBlock"] {{ gap: 0.7rem !important; }}
 
-    .stMultiSelect [data-baseweb="tag"] {{ background-color: #23251E !important; border: 1px solid #3A3D33 !important; border-radius: 999px !important; }}
+    .stMultiSelect [data-baseweb="tag"] {{ background-color: {PANEL_BG_HOVER} !important; border: 1px solid {PANEL_BORDER} !important; border-radius: 0 !important; }}
     .stMultiSelect [data-baseweb="tag"] span {{ color: {LIME} !important; }}
     .stSelectbox div[data-baseweb="select"] > div, .stTextInput input, .stNumberInput input {{
-        background-color: {BG_CARD} !important; border-radius: 12px !important; border: 1px solid #2A2C24 !important; color: {TEXT_PRIMARY} !important;
+        background-color: {BG_CARD} !important; border-radius: 0 !important; border: 1px solid {PANEL_BORDER} !important; color: {TEXT_PRIMARY} !important;
+        font-family: {MONO_STACK} !important;
     }}
 
-    /* Masthead (v3): overline badge -> big two-tone title -> subtitle -> compact
-       disclaimer note, centered as a single block in the middle of the page.
-       v2 had a sparkline preview beside/below this text -- removed in v3, see
-       the comment above the masthead's st.markdown calls below. */
+    /* Masthead (v3 lime -> v3.1 green/HUD): overline badge -> big two-tone
+       title -> subtitle -> compact disclaimer note, centered as a single
+       block in the middle of the page. */
     .masthead-center {{ text-align: center; }}
 
     .masthead-badge {{
         display: inline-flex; align-items: center; gap: 7px;
-        border: 1px solid rgba(255,255,255,0.10); border-radius: 999px;
+        border: 1px solid {PANEL_BORDER}; border-radius: 0;
         padding: 4px 12px; margin-bottom: 12px;
         font-size: 0.68rem; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
-        color: {TEXT_MUTED};
+        color: {TEXT_MUTED}; font-family: {MONO_STACK} !important;
     }}
-    .masthead-badge-dot {{ width: 6px; height: 6px; border-radius: 50%; background: {LIME}; box-shadow: 0 0 6px rgba(200,241,53,0.7); }}
+    .masthead-badge::before {{ content: "[ "; }}
+    .masthead-badge::after {{ content: " ]"; }}
+    .masthead-badge-dot {{
+        width: 6px; height: 6px; border-radius: 0; background: {LIME};
+        box-shadow: 0 0 6px rgba(57,255,110,0.7); transform: rotate(45deg);
+    }}
 
     .app-title {{
         font-size: clamp(2.2rem, 2.2rem + 2.2vw, 3.8rem); font-weight: 800;
-        letter-spacing: -0.02em; line-height: 1.05; margin-bottom: 10px;
-        text-align: center;
+        letter-spacing: -0.03em; line-height: 1.05; margin-bottom: 10px;
+        text-align: center; text-transform: uppercase;
     }}
     /* !important on both spans: the blanket "span {{ color: ... !important }}" rule
        above otherwise wins over these despite being more specific -- same fix as
        .hero-number .unit-pct/.unit-suffix and .diag-ok earlier in this file. */
     .app-title .title-plain {{ color: {TEXT_PRIMARY} !important; }}
-    .app-title .title-accent {{ color: {LIME} !important; text-shadow: 0 0 18px rgba(200,241,53,0.35); }}
+    .app-title .title-accent {{ color: {LIME} !important; text-shadow: 0 0 18px rgba(57,255,110,0.35); }}
 
     .app-subtitle {{ color: {TEXT_MUTED}; font-size: 1.15rem; margin-bottom: 10px; text-align: center; }}
 
@@ -974,12 +1054,13 @@ st.markdown(f"""
         max-width: 46rem; margin: 0 auto;
     }}
 
-    .hero-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 2px; font-size: 0.78rem; font-weight: 600; }}
-    .hero-number {{ color: {LIME}; font-size: 4.4rem; font-weight: 800; line-height: 1.0; margin: 6px 0 10px 0; }}
+    .hero-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 2px; font-size: 0.78rem; font-weight: 600; font-family: {MONO_STACK} !important; }}
+    .hero-label::before {{ content: "// "; }}
+    .hero-number {{ color: {LIME}; font-size: 4.4rem; font-weight: 800; line-height: 1.0; margin: 6px 0 10px 0; font-family: {MONO_STACK} !important; font-variant-numeric: tabular-nums; }}
     /* explicit !important on both spans below: the blanket "span {{ color: ... !important }}"
        rule earlier in this block otherwise wins over an un-marked rule despite these being
        more specific -- !important is compared before specificity, not after. "%" stays the
-       same lime as the big numeral (same unit, just a smaller mark); "AI" is the muted
+       same green as the big numeral (same unit, just a smaller mark); "AI" is the muted
        suffix labeling what the number measures -- two sizes/colors, not three. */
     .hero-number .unit-pct {{ color: {LIME} !important; font-size: 2.6rem; font-weight: 800; }}
     .hero-number .unit-suffix {{ color: {TEXT_MUTED} !important; font-size: 1.9rem; font-weight: 600; margin-left: 6px; }}
@@ -993,24 +1074,28 @@ st.markdown(f"""
        app deliberately avoids (see the module docstring: never claim a crash). */
     .risk-badge {{
         display: inline-flex; align-items: center; vertical-align: middle;
-        border-radius: 999px; padding: 5px 14px; margin-left: 16px;
+        border-radius: 0; padding: 5px 14px; margin-left: 16px;
         font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+        font-family: {MONO_STACK} !important;
     }}
-    .risk-badge-low {{ background: rgba(200,241,53,0.14); color: {LIME} !important; border: 1px solid rgba(200,241,53,0.4); }}
-    .risk-badge-moderate {{ background: rgba(227,168,59,0.14); color: {AMBER} !important; border: 1px solid rgba(227,168,59,0.4); }}
-    .risk-badge-high {{ background: rgba(244,83,74,0.14); color: {NEG_RED} !important; border: 1px solid rgba(244,83,74,0.4); }}
+    .risk-badge::before {{ content: "[ "; }}
+    .risk-badge::after {{ content: " ]"; }}
+    .risk-badge-low {{ background: rgba(57,255,110,0.14); color: {LIME} !important; border: 1px solid rgba(57,255,110,0.4); }}
+    .risk-badge-moderate {{ background: rgba(232,169,60,0.14); color: {AMBER} !important; border: 1px solid rgba(232,169,60,0.4); }}
+    .risk-badge-high {{ background: rgba(255,68,51,0.14); color: {NEG_RED} !important; border: 1px solid rgba(255,68,51,0.4); }}
     .risk-caption {{ color: {TEXT_MUTED}; font-size: 0.85rem; margin: 0 0 18px 0; }}
     .hero-substats {{ display: flex; gap: 36px; flex-wrap: wrap; }}
-    .hero-substat .sub-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 1px; font-size: 0.68rem; font-weight: 600; }}
-    .hero-substat .sub-value {{ color: {TEXT_PRIMARY}; font-size: 1.5rem; font-weight: 700; margin-top: 2px; }}
+    .hero-substat .sub-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 1px; font-size: 0.68rem; font-weight: 600; font-family: {MONO_STACK} !important; }}
+    .hero-substat .sub-value {{ color: {TEXT_PRIMARY}; font-size: 1.5rem; font-weight: 700; margin-top: 2px; font-family: {MONO_STACK} !important; font-variant-numeric: tabular-nums; }}
 
-    .section-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 2px; font-size: 0.75rem; font-weight: 700; margin: 4px 0 1px 0; }}
+    .section-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 2px; font-size: 0.75rem; font-weight: 700; margin: 4px 0 1px 0; font-family: {MONO_STACK} !important; }}
+    .section-label::before {{ content: "// "; }}
     .section-title {{ color: {TEXT_PRIMARY}; font-size: 1.35rem; font-weight: 700; margin-bottom: 7px; }}
 
     .verdict-text {{ color: {TEXT_PRIMARY}; font-size: 1.08rem; line-height: 1.55; margin: 2px 0 12px 0; }}
     .comparative-line {{ color: {TEXT_MUTED}; font-size: 0.88rem; margin: 0 0 4px 0; }}
 
-    .diag-line {{ color: {TEXT_MUTED}; font-size: 0.85rem; }}
+    .diag-line {{ color: {TEXT_MUTED}; font-size: 0.85rem; font-family: {MONO_STACK} !important; }}
     /* One-line plain-language gloss under "Gate check: PASS" (polish pass, item
        3) -- so it reads as a verified data-quality check instead of leftover
        debug output. Smaller and dimmer than the diag-line it sits under; kept
@@ -1032,21 +1117,23 @@ st.markdown(f"""
         from {{ opacity: 0; transform: translateY(16px); }}
         to {{ opacity: 1; transform: translateY(0); }}
     }}
-    /* Slim, non-clickable "how far did I get" indicator -- see render_progress_dots(). */
-    .progress-dots {{ display: flex; gap: 6px; align-items: center; margin: 2px 0 22px 0; }}
+    /* Slim, non-clickable "how far did I get" indicator -- see render_progress_dots().
+       Squares, not circles (zero-radius rule), each rotated 45deg into a small
+       diamond "reticle" mark, same shape language as .masthead-badge-dot. */
+    .progress-dots {{ display: flex; gap: 8px; align-items: center; margin: 2px 0 22px 0; }}
     .progress-dot {{
-        width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.14);
+        width: 6px; height: 6px; background: rgba(255,255,255,0.14); transform: rotate(45deg);
         transition: background 0.35s ease, box-shadow 0.35s ease;
     }}
-    .progress-dot.is-unlocked {{ background: {LIME}; box-shadow: 0 0 6px rgba(200,241,53,0.55); }}
+    .progress-dot.is-unlocked {{ background: {LIME}; box-shadow: 0 0 6px rgba(57,255,110,0.55); }}
 
     /* Persistent footer watermark -- deliberately quiet: small, muted, centered,
        plenty of top margin so it reads as a signature line, not another panel.
-       Plain text (no <a>) so it doesn't pick up the site-wide lime link color
+       Plain text (no <a>) so it doesn't pick up the site-wide green link color
        and start competing visually with the real content above it. */
     .app-footer {{
         text-align: center; color: {TEXT_MUTED}; font-size: 0.72rem;
-        opacity: 0.75; margin: 56px 0 8px 0;
+        opacity: 0.75; margin: 56px 0 8px 0; font-family: {MONO_STACK} !important;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -1799,7 +1886,7 @@ else:
         donut_fig = render_portfolio_donut(weights, beta_pct)
         st.plotly_chart(donut_fig, theme=None, width="stretch", config=PLOTLY_CONFIG)
         st.caption(
-            "Segment size is your portfolio weight. Lime marks an AI basket member, gray is a "
+            "Segment size is your portfolio weight. Green marks an AI basket member, gray is a "
             "bond/Treasury/commodity fund with no equity exposure, and sage is other equity. "
             "Shades vary within each group so neighboring segments don't blend together."
         )
@@ -1997,7 +2084,7 @@ if 4 in st.session_state["unlocked_steps"]:
     with st.container(border=True, key="step4_box"):
         fig2 = render_comparison_chart(m1_table, beta_pct, user_direct_pct)
         st.plotly_chart(fig2, theme=None, width="stretch", config=PLOTLY_CONFIG)
-        st.caption("AI basket: NVDA, MSFT, GOOGL, META, AMZN, AAPL, AVGO, TSM, equal-weighted. Your bar is the lime one.")
+        st.caption("AI basket: NVDA, MSFT, GOOGL, META, AMZN, AAPL, AVGO, TSM, equal-weighted. Your bar is the green one.")
 
     # The same themed sector mixes offered in Step 1's "Or start from a
     # popular portfolio" picker, redrawn as wheels here so you can see every
