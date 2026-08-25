@@ -66,11 +66,14 @@ AMBER = "#E8A93C"          # 2022-style scenario series / caution
 NEG_RED = "#FF4433"        # danger / 2008-style scenario series
 TEXT_PRIMARY = "#EAF5EC"
 TEXT_MUTED = "#6F8C7A"
-MUTED_GRAY_1 = "#3E4A3F"   # reference-portfolio "direct weight" bars
-MUTED_GRAY_2 = "#7C9585"   # reference-portfolio dots/lines (tradeoff chart, rolling beta)
-SAGE = "#4FAE7A"           # reference-portfolio "effective exposure" bars -- distinct enough
-                          # from the primary GREEN and from MUTED_GRAY_1/2 that the
-                          # direct-vs-effective gap (this chart's entire point) stays legible
+MUTED_GRAY_1 = "#454B4D"   # reference-portfolio "direct weight" bars -- neutral cool gray
+MUTED_GRAY_2 = "#8A9296"   # reference-portfolio dots/lines (tradeoff chart, rolling beta) --
+                          # deliberately neutral, not green-tinted, so it doesn't blend into
+                          # GREEN/TEAL on the donut and every wheel doesn't read as "all green"
+TEAL = "#2FB8D9"           # "other equity" donut group + reference-portfolio "effective exposure"
+                          # bars -- a distinct blue-family hue from the primary GREEN (AI basket)
+                          # and neutral-gray (bonds/zero-exposure), so the three donut groups read
+                          # as three different colors instead of two shades of green plus gray
 GRIDLINE = "rgba(111,140,122,0.15)"
 FONT_STACK = "'Inter','Space Grotesk','Segoe UI',system-ui,-apple-system,sans-serif"
 # Technical/telemetry type -- labels, badges, step numbers, data tables. System-
@@ -115,7 +118,7 @@ BG_DIAGONAL_GLOW_OPACITY = 0.10  # the soft halo running parallel to it
 # hashed, so shade assignment is stable and predictable within one render.
 DONUT_LIME_SHADES = ["#39FF6E", "#28C455", "#8CFFB2", "#1C8F3D"]
 DONUT_GRAY_SHADES = ["#7C9585", "#526354", "#A6C2AE", "#3A4A3D"]
-DONUT_SAGE_SHADES = ["#4FAE7A", "#357854", "#7FD1A3", "#295E3F"]
+DONUT_TEAL_SHADES = ["#2FB8D9", "#1F8AA8", "#7DDCEF", "#155F73"]
 DONUT_GROUP_LABELS = {
     "ai": "AI basket member",
     "zero": "No equity exposure (bond/Treasury/commodity)",
@@ -480,7 +483,7 @@ def render_comparison_chart(m1_table: pd.DataFrame, user_beta_pct: float, user_d
     direct_y = [v if v is not None else 0 for v in all_direct_raw]
     direct_text = [f"{v:.0f}%" if v is not None else "N/A" for v in all_direct_raw]
     direct_colors = [MUTED_GRAY_1] * len(names) + [LIME_DIM]
-    effective_colors = [SAGE] * len(names) + [LIME]
+    effective_colors = [TEAL] * len(names) + [LIME]
 
     fig = go.Figure()
     fig.add_bar(
@@ -654,7 +657,7 @@ def render_portfolio_donut(weights: dict, beta_pct: float, height: int = 340,
     tickers = list(weights.keys())
     weight_pcts = [weights[t] * 100 for t in tickers]
 
-    shade_pools = {"ai": DONUT_LIME_SHADES, "zero": DONUT_GRAY_SHADES, "other": DONUT_SAGE_SHADES}
+    shade_pools = {"ai": DONUT_LIME_SHADES, "zero": DONUT_GRAY_SHADES, "other": DONUT_TEAL_SHADES}
     group_counters = {"ai": 0, "zero": 0, "other": 0}
     colors, hover_group_labels = [], []
     for ticker in tickers:
@@ -1135,6 +1138,32 @@ st.markdown(f"""
         text-align: center; color: {TEXT_MUTED}; font-size: 0.72rem;
         opacity: 0.75; margin: 56px 0 8px 0; font-family: {MONO_STACK} !important;
     }}
+
+    /* Skeletal x-ray glyph (v3.1, new) -- a small hand-drawn-in-SVG figure
+       above the masthead badge, the one purely decorative nod to "x-ray" as
+       imagery rather than just a color scheme. Kept abstract/schematic (a
+       fishbone ribcage, not anatomically literal) so it reads clearly at
+       small size instead of turning to mush. The ::after sweep is a thin
+       glowing bar translating top-to-bottom on a loop -- "actively scanning"
+       -- confined to this one small element so it stays a flourish, not a
+       page-wide distraction in a finance tool. */
+    .xray-glyph-wrap {{
+        position: relative; width: 108px; margin: 0 auto 10px auto;
+        filter: drop-shadow(0 0 10px rgba(57,255,110,0.35));
+    }}
+    .xray-glyph-wrap svg {{ display: block; width: 100%; height: auto; }}
+    .xray-glyph-wrap::after {{
+        content: ""; position: absolute; left: 4%; right: 4%; height: 2px; top: 6%;
+        background: linear-gradient(90deg, transparent, {LIME}, transparent);
+        box-shadow: 0 0 8px rgba(57,255,110,0.8); pointer-events: none;
+        animation: xraySweep 3.4s ease-in-out infinite;
+    }}
+    @keyframes xraySweep {{
+        0% {{ top: 4%; opacity: 0; }}
+        12% {{ opacity: 1; }}
+        88% {{ opacity: 1; }}
+        100% {{ top: 92%; opacity: 0; }}
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1146,6 +1175,46 @@ st.markdown(f"""
 # instead of reading as a small supporting preview. The same rolling-beta
 # series is still shown full-size in the "Bonus" expander near the end of the
 # page (see the Computation block's user_rolling_full, reused there).
+# Skeletal x-ray glyph -- pure decoration, see the .xray-glyph-wrap CSS
+# comment above for why it's a schematic fishbone ribcage rather than an
+# anatomically literal drawing. Inline SVG, no external asset request
+# (offline rule, same as every font choice in this file).
+XRAY_GLYPH_SVG = """
+<div class="xray-glyph-wrap">
+<svg viewBox="0 0 140 220" xmlns="http://www.w3.org/2000/svg" stroke="#39FF6E" fill="none"
+     stroke-width="2.4" stroke-linecap="round">
+  <circle cx="70" cy="26" r="14" opacity="0.9" />
+  <circle cx="65" cy="24" r="1.4" fill="#39FF6E" stroke="none" />
+  <circle cx="75" cy="24" r="1.4" fill="#39FF6E" stroke="none" />
+  <path d="M62,34 Q70,40 78,34" opacity="0.7" />
+  <line x1="70" y1="40" x2="70" y2="125" opacity="0.9" />
+  <g opacity="0.75">
+    <line x1="70" y1="52" x2="48" y2="62" />
+    <line x1="70" y1="52" x2="92" y2="62" />
+    <line x1="70" y1="64" x2="46" y2="74" />
+    <line x1="70" y1="64" x2="94" y2="74" />
+    <line x1="70" y1="76" x2="46" y2="86" />
+    <line x1="70" y1="76" x2="94" y2="86" />
+    <line x1="70" y1="88" x2="48" y2="98" />
+    <line x1="70" y1="88" x2="92" y2="98" />
+  </g>
+  <path d="M70,125 L52,140 M70,125 L88,140" opacity="0.9" />
+  <path d="M46,54 L28,90 L24,118" opacity="0.6" />
+  <path d="M94,54 L112,90 L116,118" opacity="0.6" />
+  <circle cx="28" cy="90" r="2.2" fill="#39FF6E" stroke="none" opacity="0.6" />
+  <circle cx="112" cy="90" r="2.2" fill="#39FF6E" stroke="none" opacity="0.6" />
+  <path d="M52,140 L48,175 L44,206" opacity="0.9" />
+  <path d="M88,140 L92,175 L96,206" opacity="0.9" />
+  <circle cx="48" cy="175" r="2.4" fill="#39FF6E" stroke="none" opacity="0.85" />
+  <circle cx="92" cy="175" r="2.4" fill="#39FF6E" stroke="none" opacity="0.85" />
+  <g stroke="#3EE8FF" stroke-width="1.2" stroke-dasharray="3 6" opacity="0.35">
+    <line x1="14" y1="70" x2="126" y2="70" />
+    <line x1="14" y1="150" x2="126" y2="150" />
+  </g>
+</svg>
+</div>
+"""
+st.markdown(XRAY_GLYPH_SVG, unsafe_allow_html=True)
 st.markdown(
     '<div class="masthead-center"><div class="masthead-badge">'
     '<span class="masthead-badge-dot"></span>100-TICKER UNIVERSE</div></div>',
@@ -1887,7 +1956,7 @@ else:
         st.plotly_chart(donut_fig, theme=None, width="stretch", config=PLOTLY_CONFIG)
         st.caption(
             "Segment size is your portfolio weight. Green marks an AI basket member, gray is a "
-            "bond/Treasury/commodity fund with no equity exposure, and sage is other equity. "
+            "bond/Treasury/commodity fund with no equity exposure, and teal is other equity. "
             "Shades vary within each group so neighboring segments don't blend together."
         )
         # Shareable link (polish pass, item 4) -- see encode_portfolio_query and
