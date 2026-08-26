@@ -2,7 +2,7 @@
 
 A single-page Streamlit app on top of the Hidden AI Portfolio project's own
 research machinery (analysis/factor_lib.py). Users build a portfolio from a
-~100-ticker demo universe (whatever is cached in data/prices.db -- the original
+~140-ticker demo universe (whatever is cached in data/prices.db -- the original
 research tickers plus a wide set of popular ETFs and single stocks, see
 data/pull_prices.py) and get back:
   1. Their portfolio's effective AI exposure (beta) vs. its naive direct weight.
@@ -996,6 +996,53 @@ st.markdown(f"""
         background-color: transparent; border: none;
     }}
 
+    /* Methodology/caveat toggle expanders (v4) -- collapsed-by-default home
+       for caveat/assumption prose (R² explanation, fixed-weight/daily-
+       rebalanced notes, projection-formula detail, etc.) so it doesn't
+       compete with the core narrative above it. Deliberately a quieter,
+       outline-only bracket button, NOT the loud filled-green CTA look the
+       sector/repricing galleries use above -- those are alternate content
+       paths, these are secondary text, and the two shouldn't read as the
+       same weight of affordance. Every expander/popover meant to get this
+       treatment is given a key prefixed "meth_" at its call site; this one
+       attribute-substring selector covers all of them (and any future one)
+       without a new rule per key. Covers both st.expander's <summary> and
+       st.popover's trigger <button> with one shared rule set.
+    */
+    [class*="st-key-meth_"] [data-testid="stExpander"] {{ background-color: transparent; border: none; }}
+    [class*="st-key-meth_"] summary, [class*="st-key-meth_"] button {{
+        font-family: {MONO_STACK} !important; text-transform: uppercase; letter-spacing: 0.6px;
+        font-size: 0.76rem !important; color: {LIME} !important;
+        background-color: {BG_CARD} !important; border: 1px solid {PANEL_BORDER} !important;
+        border-radius: 0 !important; padding: 6px 14px !important;
+        display: inline-flex !important; width: fit-content !important;
+    }}
+    [class*="st-key-meth_"] summary::before, [class*="st-key-meth_"] button::before {{ content: "[ "; opacity: 0.65; }}
+    [class*="st-key-meth_"] summary::after, [class*="st-key-meth_"] button::after {{ content: " ]"; opacity: 0.65; }}
+    [class*="st-key-meth_"] summary:hover, [class*="st-key-meth_"] button:hover {{
+        border-color: {LIME} !important; box-shadow: 0 0 12px rgba(57,255,110,0.25);
+    }}
+    [class*="st-key-meth_"] summary p, [class*="st-key-meth_"] button p {{
+        color: {LIME} !important; font-family: {MONO_STACK} !important; font-weight: 600;
+    }}
+
+    /* AI%-vs-baseline toast (v4) -- fires once after "Calculate my AI %"
+       (see the "_flash_ai_toast" flag), restyled from Streamlit's default
+       toast chrome into the same flat HUD-panel look as .stAlert below,
+       instead of introducing a second notification system. */
+    [data-testid="stToast"] {{
+        background-color: {BG_CARD} !important; border: 1px solid {LIME} !important; border-radius: 0 !important;
+        box-shadow: 0 0 18px rgba(57,255,110,0.3);
+    }}
+    [data-testid="stToast"] * {{ color: {TEXT_PRIMARY} !important; font-family: {MONO_STACK} !important; }}
+    /* Same fix as the global [data-testid="stIconMaterial"] rule far above --
+       the blanket monospace-font rule on the line just above this one would
+       otherwise stomp the toast's own icon glyph the same way the page-wide
+       "*" rule would (see that rule's own comment), turning it into literal
+       text ("terminal") instead of a rendered icon. st.toast's icon element
+       carries its own testid (stToastDynamicIcon), not stIconMaterial. */
+    [data-testid="stToast"] [data-testid="stToastDynamicIcon"] {{ font-family: "Material Symbols Rounded" !important; }}
+
     /* Sector-preset dropdowns -- a green outline so they visually read as an
        interactive control instead of a flat label (otherwise looks like
        plain text with no obvious affordance to open more options). */
@@ -1145,7 +1192,17 @@ st.markdown(f"""
 
     .section-label {{ color: {TEXT_MUTED}; text-transform: uppercase; letter-spacing: 2px; font-size: 0.75rem; font-weight: 700; margin: 4px 0 1px 0; font-family: {MONO_STACK} !important; }}
     .section-label::before {{ content: "// "; }}
-    .section-title {{ color: {TEXT_PRIMARY}; font-size: 1.35rem; font-weight: 700; margin-bottom: 7px; }}
+    /* v5: bumped from 1.35rem/700 to a clamp() that scales with viewport width
+       like .app-title above -- these are meant to read as a clear section
+       break while scrolling, closer to (not matching) the hero title's own
+       weight, not a slightly-bolder caption. Color/letter-spacing/text-
+       transform untouched on purpose -- this is a size/weight change only,
+       every other visual property (including the "// STEP N" eyebrow right
+       above it via .section-label) stays exactly as it was. */
+    .section-title {{
+        color: {TEXT_PRIMARY}; font-weight: 800; margin-bottom: 9px; line-height: 1.1;
+        font-size: clamp(1.7rem, 1.3rem + 1.8vw, 2.5rem);
+    }}
 
     .verdict-text {{ color: {TEXT_PRIMARY}; font-size: 1.08rem; line-height: 1.55; margin: 2px 0 12px 0; }}
     .comparative-line {{ color: {TEXT_MUTED}; font-size: 0.88rem; margin: 0 0 4px 0; }}
@@ -1174,13 +1231,34 @@ st.markdown(f"""
     }}
     /* Slim, non-clickable "how far did I get" indicator -- see render_progress_dots().
        Squares, not circles (zero-radius rule), each rotated 45deg into a small
-       diamond "reticle" mark, same shape language as .masthead-badge-dot. */
-    .progress-dots {{ display: flex; gap: 8px; align-items: center; margin: 2px 0 22px 0; }}
+       diamond "reticle" mark, same shape language as .masthead-badge-dot.
+       v4: fixed to the right edge, vertically centered, instead of sitting
+       inline in the hero flow -- a JS scroll listener (see the scroll-sync
+       <script> right after render_progress_dots()'s call site) keeps it live
+       as the reader scrolls, so it has to stay on screen the whole time, not
+       just while the hero is in view. pointer-events: none, same reasoning
+       as .hud-corner-tag -- purely a read-only position indicator, never a
+       click target, so it can never intercept a click meant for the chart/
+       button underneath it even at a high z-index. Column layout + small
+       footprint (a handful of 6px marks) keeps it out of the charts' way. */
+    .progress-dots {{
+        position: fixed; top: 50%; right: 14px; transform: translateY(-50%);
+        display: flex; flex-direction: column; gap: 10px; align-items: center;
+        z-index: 999998; pointer-events: none;
+    }}
     .progress-dot {{
         width: 6px; height: 6px; background: rgba(255,255,255,0.14); transform: rotate(45deg);
-        transition: background 0.35s ease, box-shadow 0.35s ease;
+        transition: background 0.35s ease, box-shadow 0.35s ease, transform 0.35s ease;
     }}
     .progress-dot.is-unlocked {{ background: {LIME}; box-shadow: 0 0 6px rgba(57,255,110,0.55); }}
+    /* The step currently in view -- a brighter glow and a slight scale-up,
+       layered on top of (not instead of) is-unlocked's green fill, since the
+       current step is always itself unlocked (you can't be scrolled to
+       content that hasn't rendered). */
+    .progress-dot.is-current {{
+        transform: rotate(45deg) scale(1.7);
+        box-shadow: 0 0 10px rgba(57,255,110,0.9);
+    }}
 
     /* Persistent footer watermark -- deliberately quiet: small, muted, centered,
        plenty of top margin so it reads as a signature line, not another panel.
@@ -1281,7 +1359,7 @@ XRAY_GLYPH_SVG = """
 st.markdown(XRAY_GLYPH_SVG, unsafe_allow_html=True)
 st.markdown(
     '<div class="masthead-center"><div class="masthead-badge">'
-    '<span class="masthead-badge-dot"></span>100-TICKER UNIVERSE</div></div>',
+    '<span class="masthead-badge-dot"></span>140-TICKER UNIVERSE</div></div>',
     unsafe_allow_html=True,
 )
 st.markdown(
@@ -1443,20 +1521,91 @@ def unlock_step(n: int) -> bool:
 def render_progress_dots() -> None:
     """Slim, non-clickable progress indicator for returning users -- a visual
     sense of how far they already got, not jump-ahead nav (jumping still
-    requires going through Step 1's portfolio construction)."""
+    requires going through Step 1's portfolio construction). Fixed to the
+    right edge via CSS (see .progress-dots) rather than inline in the hero,
+    so it stays on screen everywhere; see render_scroll_sync_script() right
+    after this call site for the JS that keeps is-current in sync with
+    scroll position. data-step lets that script match a dot to a step number
+    without depending on dict order.
+    """
     unlocked = st.session_state["unlocked_steps"]
     dots = "".join(
-        f'<span class="progress-dot{" is-unlocked" if n in unlocked else ""}" title="{STEP_NAMES[n]}"></span>'
+        f'<span class="progress-dot{" is-unlocked" if n in unlocked else ""}" '
+        f'data-step="{n}" title="{STEP_NAMES[n]}"></span>'
         for n in STEP_NAMES
     )
     st.markdown(f'<div class="progress-dots">{dots}</div>', unsafe_allow_html=True)
 
 
+def render_scroll_sync_script() -> None:
+    """Injects the scroll listener that drives .progress-dot.is-current (see
+    render_progress_dots() above and the .progress-dots CSS block). Native
+    Streamlit has no scroll-position primitive, so this is the one place in
+    the app that reaches for raw JS via st.html(unsafe_allow_javascript=True)
+    -- same mechanism the shareable-link copy button already uses elsewhere
+    in this file, just for a persistent listener instead of a one-shot
+    action. st.html inserts straight into the app's own document (unlike
+    st.components.v1.html's sandboxed iframe), so this script can see the
+    step-anchor-N divs step_anchor() drops at the top of each step and can
+    reach the .progress-dot elements the function above renders.
+
+    Guarded by a window-level flag so a Streamlit rerun re-executing this
+    line never attaches a second listener. Re-queries anchors/dots on every
+    tick instead of caching references, since Streamlit's own re-renders
+    replace those DOM nodes independently of this script's lifecycle. The
+    setInterval is a cheap safety net for exactly that case (new steps
+    unlocking, page height changing) when no real scroll event happens to
+    accompany it; the scroll/resize listeners are what make it feel live.
+    """
+    st.html(
+        """
+        <script>
+        (function() {
+            if (window.__xrayScrollSyncInstalled) { return; }
+            window.__xrayScrollSyncInstalled = true;
+
+            function update() {
+                var anchors = document.querySelectorAll('[id^="step-anchor-"]');
+                var current = 0;
+                var threshold = window.innerHeight * 0.4;
+                anchors.forEach(function(el) {
+                    var n = parseInt(el.id.replace('step-anchor-', ''), 10);
+                    var rect = el.getBoundingClientRect();
+                    if (rect.top <= threshold && n > current) {
+                        current = n;
+                    }
+                });
+                document.querySelectorAll('.progress-dot').forEach(function(dot) {
+                    var n = parseInt(dot.getAttribute('data-step'), 10);
+                    dot.classList.toggle('is-current', n === current);
+                });
+            }
+
+            var ticking = false;
+            function onScroll() {
+                if (ticking) { return; }
+                ticking = true;
+                window.requestAnimationFrame(function() { update(); ticking = false; });
+            }
+
+            window.addEventListener('scroll', onScroll, {passive: true});
+            window.addEventListener('resize', onScroll, {passive: true});
+            setInterval(update, 1000);
+            update();
+        })();
+        </script>
+        """,
+        unsafe_allow_javascript=True,
+    )
+
+
 def step_anchor(n: int) -> None:
     """Zero-height marker div for each step -- kept as a stable DOM id per
-    step in case a future feature needs to target it; no longer used for
-    auto-scrolling (removed: it fired on every gate button, not just the
-    first time, and users found it disorienting)."""
+    step. No longer used for auto-scrolling (removed: it fired on every gate
+    button, not just the first time, and users found it disorienting), but
+    now doubles as the scroll-sync script's own position reference (see
+    render_scroll_sync_script() above) -- one stable per-step anchor serving
+    both would-be uses instead of two separate marker mechanisms."""
     st.markdown(f'<div id="step-anchor-{n}"></div>', unsafe_allow_html=True)
 
 
@@ -1526,6 +1675,7 @@ if st.session_state.pop("_flash_copy_link", False):
     st.toast("Shareable link copied — this portfolio is now saved in the URL.")
 
 render_progress_dots()
+render_scroll_sync_script()
 
 # ============================================================================
 # Step 0 -- why this exists, plus a real-world proof point (QQQM) that a
@@ -1535,6 +1685,7 @@ render_progress_dots()
 # reaction to the user's own portfolio.
 # ============================================================================
 
+step_anchor(0)
 section_header("0", "Why this exists")
 with st.container(border=True):
     st.markdown(
@@ -1571,7 +1722,7 @@ with st.container(border=True):
 
     if 1 not in st.session_state["unlocked_steps"]:
         st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
-        if st.button("Show me how →", key="step0_continue", type="primary"):
+        if st.button("Let's build it together →", key="step0_continue", type="primary"):
             if unlock_step(1):
                 st.session_state["_flash_animate"] = {1}
             st.rerun()
@@ -1633,7 +1784,7 @@ if 1 not in st.session_state["unlocked_steps"]:
     st.stop()
 
 step_anchor(1)
-section_header("1", "Build your portfolio")
+section_header("1", "Build your portfolio or use the option below to select a popular one")
 
 st.caption(
     f"Covers {len(universe)} tickers across major US index funds, sector ETFs, and mega-cap "
@@ -1781,31 +1932,13 @@ with st.container(border=True, key="step1_box"):
         st.stop()
 
 # ============================================================================
-# Cascade unlock -- reaching here means the weights above validated (the
-# errors branch just above already st.stop()'d otherwise), so every
-# downstream step in this list has what it needs and they unlock together.
-# See the "Progressive step-reveal state" comment near the top of the script
-# for why this cascades instead of gating on N separate clicks. This is a
-# no-op after the first time a valid portfolio exists in this session
-# (unlock_step() returns False for anything already unlocked), so re-editing
-# Step 1's weights later doesn't re-trigger it or re-lock anything.
-#
-# Steps 2, 3, and 4 (donut/headline AI%, the realized-return panel, and the
-# comparison bar that plots the same beta_pct) and steps 5 and 6 (repricing
-# scenario bars + tradeoff scatter) are deliberately NOT in this list -- each
-# group is gated behind its own explicit button + progress animation instead
-# (see the "Calculate my AI %" gate right after the Computation block, and
-# the "Run repricing simulation" gate right before Step 5's header). Step 3
-# used to be here (auto-unlocked) -- moved out because that let "Your
-# portfolio, the last year" render before the AI%-calculation button was
-# ever clicked; see that section's own comment. Bonus (7) is unrelated to
-# either gate and stays automatic.
+# No cascade unlock here -- every step past Step 1 (2/3/4 behind "Calculate
+# my AI %", 5/6/7 behind "Run repricing simulation") is gated behind an
+# explicit button + progress animation instead. Bonus (7) used to auto-unlock
+# the instant a valid portfolio existed, right alongside Step 1 -- moved to
+# unlock with 5/6 instead (see that gate below) so it only appears once the
+# user has been through the whole flow, not right after building a portfolio.
 # ============================================================================
-CASCADE_STEPS = (7,)
-newly_cascade = {n for n in CASCADE_STEPS if unlock_step(n)}
-if newly_cascade:
-    st.session_state["_flash_animate"] = newly_cascade
-    st.rerun()
 
 # ============================================================================
 # Computation -- spinner covers exactly this block. The get_*/load_* calls are
@@ -2042,6 +2175,7 @@ if 2 not in st.session_state["unlocked_steps"]:
         newly_ai = {n for n in (2, 3, 4) if unlock_step(n)}
         if newly_ai:
             st.session_state["_flash_animate"] = newly_ai
+        st.session_state["_flash_ai_toast"] = True
         st.rerun()
 else:
     st.markdown(
@@ -2095,6 +2229,41 @@ else:
             unsafe_allow_html=True,
         )
 
+        # AI%-vs-baseline toast (contextual pop-up, item 4) -- fires exactly
+        # once per "Calculate my AI %" click via the same pop-once session_state
+        # idiom as "_flash_copy_link" above (set right before that button's own
+        # st.rerun(), consumed here on the very next run so it can never
+        # re-fire on a later, unrelated rerun). st.toast is Streamlit's own
+        # overlay/notification primitive -- restyled via the [data-testid=
+        # "stToast"] rule above into this app's HUD look -- rather than a new,
+        # bespoke notification system: it's already non-blocking, auto-fades,
+        # and doesn't shift layout, which is exactly what's being asked for
+        # here. SPY/QQQ betas are read straight from m1_table (already loaded
+        # above in the Computation block), never hardcoded, so this can't drift
+        # from the comparison chart it's teasing (Step 4, further down).
+        # Whichever baseline is CROSSED is the more informative one to name --
+        # if the user's own number clears QQQ's (the higher of the two), saying
+        # so is more notable than repeating the lower SPY bar it already
+        # cleared; below both, SPY is the more widely recognized reference
+        # point to sit below. Language is comparative only (no "should"/
+        # "consider"/etc.) -- see the module docstring's own house rule on
+        # never giving advice.
+        if st.session_state.pop("_flash_ai_toast", False):
+            spy_baseline_pct = m1_table.loc["SPY", "beta"] * 100
+            qqq_baseline_pct = m1_table.loc["QQQ", "beta"] * 100
+            # "\\>" (not "> "): st.toast's body renders GitHub-flavored markdown,
+            # where a bare "> " at the start of a line is blockquote syntax --
+            # it would silently swallow the literal terminal-prompt "> " this is
+            # going for and render an indented blockquote instead. The escape
+            # keeps the literal character.
+            if beta_pct > qqq_baseline_pct:
+                toast_msg = f"\\> AI% ({beta_pct:.0f}%) exceeds QQQ's ~{qqq_baseline_pct:.0f}% baseline"
+            elif beta_pct > spy_baseline_pct:
+                toast_msg = f"\\> AI% ({beta_pct:.0f}%) exceeds SPY's ~{spy_baseline_pct:.0f}% baseline"
+            else:
+                toast_msg = f"\\> AI% ({beta_pct:.0f}%) is below SPY's ~{spy_baseline_pct:.0f}% baseline"
+            st.toast(toast_msg, icon=":material/terminal:", duration=5)
+
         # Methodology caveat, surfaced near the headline (polish pass, item 2) --
         # same exact wording as Step 5's own caption (see the "Linear projection"
         # st.caption() call further down), just also reachable from here via a
@@ -2103,7 +2272,10 @@ else:
         # dot-com/no-bubble projected numbers this methodology produces, so this
         # is the natural place for a reader to want the caveat. Step 5's own
         # caption is untouched -- this is an additional pointer, not a move.
-        with st.popover("ⓘ How the projected numbers below are calculated", key="methodology_popover"):
+        # key renamed to the "meth_" prefix (see the [class*="st-key-meth_"]
+        # CSS rule) so this picks up the same bracket-button look as every
+        # other collapsed caveat/methodology toggle added in this pass.
+        with st.popover("ⓘ How the projected numbers below are calculated", key="meth_step2_popover"):
             st.caption(
                 "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "
                 "drift term. A projection, not a forecast. See LIMITATIONS.md."
@@ -2127,18 +2299,22 @@ else:
                 f"{'has' if len(unresolvable) == 1 else 'have'} no known top-10 holdings weight."
             )
 
-        st.caption(
-            f"An R² of {r_squared:.2f} means the AI basket explains **{r_squared * 100:.0f}%** of your "
-            f"portfolio's daily movement. The other **{(1 - r_squared) * 100:.0f}%** comes from your own "
-            "holdings and isn't captured by this basket."
-        )
-        if r_squared < 0.3:
+        # R² explanation -- caveat/methodology text (what the number means, not
+        # the number itself), so it's collapsed by default behind the same
+        # "meth_" bracket toggle as the rest of this pass's collapsed sections.
+        with st.expander("See methodology", key="meth_step2_rsquared"):
             st.caption(
-                "R² is low here, which means the exposure % above is a real but partial relationship: "
-                "most of this portfolio's day-to-day movement isn't AI-basket-driven at all. That's common "
-                "for single-stock or narrow portfolios. Beta measures the *slope* of the relationship; "
-                "R² measures how much of the movement it actually accounts for."
+                f"An R² of {r_squared:.2f} means the AI basket explains **{r_squared * 100:.0f}%** of your "
+                f"portfolio's daily movement. The other **{(1 - r_squared) * 100:.0f}%** comes from your own "
+                "holdings and isn't captured by this basket."
             )
+            if r_squared < 0.3:
+                st.caption(
+                    "R² is low here, which means the exposure % above is a real but partial relationship: "
+                    "most of this portfolio's day-to-day movement isn't AI-basket-driven at all. That's common "
+                    "for single-stock or narrow portfolios. Beta measures the *slope* of the relationship; "
+                    "R² measures how much of the movement it actually accounts for."
+                )
 
         if beta_pct > 100:
             st.warning(
@@ -2161,7 +2337,7 @@ else:
                 f"portfolio with full history."
             )
 
-        with st.expander("Why these 8 tickers?"):
+        with st.expander("Why these 8 tickers?", key="meth_why_8_tickers"):
             st.markdown(
                 "NVDA, MSFT, GOOGL, META, AMZN, AAPL, AVGO, and TSM: the largest, most "
                 "obviously AI-exposed mega-cap names, picked with the benefit of hindsight. "
@@ -2176,6 +2352,16 @@ else:
                 "regardless of size, so NVDA and META pull equally even though NVDA's market "
                 "cap is roughly triple META's. A cap-weighted basket would let the biggest "
                 "names dominate instead, closer to how a real index behaves."
+            )
+            st.markdown(
+                "That's deliberate, not incidental. This app's whole point is measuring "
+                "concentration risk, so building the very yardstick it measures against "
+                "around whichever single mega-cap happens to be largest today would "
+                "undercut the point -- the basket would inherit the same concentration "
+                "problem it's supposed to expose. Equal-weighting keeps the signal from "
+                "being dominated by one name (today, that would be NVDA), the same reason "
+                "RSP (equal-weight S&P 500) sits alongside SPY as a reference portfolio "
+                "elsewhere in this app."
             )
             beta_pct_delta = beta_pct_capweighted - beta_pct
             st.markdown(
@@ -2230,11 +2416,12 @@ if 4 in st.session_state["unlocked_steps"]:
             )
         fig_realized = render_realized_return_chart(user_indexed, spy_indexed, user_return_pct, spy_return_pct)
         st.plotly_chart(fig_realized, theme=None, width="stretch", config=PLOTLY_CONFIG)
-        st.caption(
-            "This is realized performance under a fixed-weight, daily-rebalanced assumption, not "
-            "what you'd actually have earned with your own trade timing. It's the upside your "
-            "measured AI exposure has already produced. Step 5 covers the conditional downside."
-        )
+        with st.expander("See methodology", key="meth_step3_assumption"):
+            st.caption(
+                "This is realized performance under a fixed-weight, daily-rebalanced assumption, not "
+                "what you'd actually have earned with your own trade timing. It's the upside your "
+                "measured AI exposure has already produced. Step 5 covers the conditional downside."
+            )
 
 # ============================================================================
 # Panel 3: Comparison chart -- gated by the SAME "Calculate my AI %" flag as
@@ -2270,10 +2457,11 @@ if 4 in st.session_state["unlocked_steps"]:
         "The same wheel as your own, run on the themed sector mixes from Step 1's picker, "
         "so you can see how your number above compares against every one of them at once."
     )
-    st.caption(
-        "AI% here is a sensitivity measure (regression beta against the AI basket), not a share "
-        "of holdings -- it can go over 100% if a mix is more volatile than the basket itself."
-    )
+    with st.expander("See methodology", key="meth_step4_sidebyside"):
+        st.caption(
+            "AI% here is a sensitivity measure (regression beta against the AI basket), not a share "
+            "of holdings -- it can go over 100% if a mix is more volatile than the basket itself."
+        )
     side_by_side_presets = {
         name: preset for name, preset in SECTOR_PRESETS.items()
         if all(t in universe for t in preset["tickers"])
@@ -2318,7 +2506,10 @@ if 4 in st.session_state["unlocked_steps"]:
     if 5 not in st.session_state["unlocked_steps"]:
         if st.button("Run repricing simulation on your selected portfolio →", key="run_repricing_sim", type="primary"):
             run_gate_animation(REPRICING_SIM_STAGES)
-            newly_sim = {n for n in (5, 6) if unlock_step(n)}
+            # 7 (Bonus) unlocks here too, not on its own trigger -- this is the
+            # last explicit gate in the flow, so "done everything" means having
+            # clicked through to here, not just having built a portfolio.
+            newly_sim = {n for n in (5, 6, 7) if unlock_step(n)}
             if newly_sim:
                 st.session_state["_flash_animate"] = newly_sim
             st.rerun()
@@ -2336,21 +2527,22 @@ if 4 in st.session_state["unlocked_steps"]:
 
             fig3 = render_scenario_chart(proj_no_bubble, proj_2022, proj_2008, proj_dotcom, spy_crash_refs)
             st.plotly_chart(fig3, theme=None, width="stretch", config=PLOTLY_CONFIG)
-            st.caption(
-                "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "
-                "drift term. A projection, not a forecast. See LIMITATIONS.md."
-            )
-            st.caption(
-                "This app uses three historical analogies: 2022 (a smaller, rate-driven "
-                "growth-stock repricing), 2008 (a systemic crash where the \"rest of market\" "
-                "fell about as hard as the epicenter, the weakest analogy of the three since "
-                "tech wasn't what 2008 was about), and dot-com 2000. Dot-com gets the emphasis "
-                "elsewhere in this app (the disclaimer above, Step 6's chart) because it's the "
-                "one true **concentration** crash on record, with the market's top holdings "
-                "cracking under their own weight the same way Step 0's chart shows happening "
-                "again today. 2022 and 2008 are real data points here too, just weaker "
-                "structural matches to what this app measures."
-            )
+            with st.expander("See methodology", key="meth_step5_methodology"):
+                st.caption(
+                    "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "
+                    "drift term. A projection, not a forecast. See LIMITATIONS.md."
+                )
+                st.caption(
+                    "This app uses three historical analogies: 2022 (a smaller, rate-driven "
+                    "growth-stock repricing), 2008 (a systemic crash where the \"rest of market\" "
+                    "fell about as hard as the epicenter, the weakest analogy of the three since "
+                    "tech wasn't what 2008 was about), and dot-com 2000. Dot-com gets the emphasis "
+                    "elsewhere in this app (the disclaimer above, Step 6's chart) because it's the "
+                    "one true **concentration** crash on record, with the market's top holdings "
+                    "cracking under their own weight the same way Step 0's chart shows happening "
+                    "again today. 2022 and 2008 are real data points here too, just weaker "
+                    "structural matches to what this app measures."
+                )
 
         step_anchor(6)
         section_header("6", "The menu: upside kept vs. downside risked")
@@ -2364,16 +2556,17 @@ if 4 in st.session_state["unlocked_steps"]:
             fig4 = render_tradeoff_chart(m3_reference, proj_dotcom, proj_no_bubble)
             st.plotly_chart(fig4, theme=None, width="stretch", config=PLOTLY_CONFIG)
 
-            st.caption(
-                "This chart plots the dot-com scenario rather than 2022 or 2008, because it's "
-                "the closest structural match to a concentration crash (see Step 5's caption). "
-                "The other two scenarios' numbers are still in the table above, just not drawn "
-                "as a second axis here."
-            )
-            st.markdown(
-                "*This app doesn't recommend a weight. It just shows the tradeoff your portfolio "
-                "implies, same stance as the rest of this project.*"
-            )
+            with st.expander("See methodology", key="meth_step6_methodology"):
+                st.caption(
+                    "This chart plots the dot-com scenario rather than 2022 or 2008, because it's "
+                    "the closest structural match to a concentration crash (see Step 5's caption). "
+                    "The other two scenarios' numbers are still in the table above, just not drawn "
+                    "as a second axis here."
+                )
+                st.markdown(
+                    "*This app doesn't recommend a weight. It just shows the tradeoff your portfolio "
+                    "implies, same stance as the rest of this project.*"
+                )
 
         # --------------------------------------------------------------------
         # Other portfolios' repricing -- same dropdown pattern as Step 1's
@@ -2435,30 +2628,35 @@ if 4 in st.session_state["unlocked_steps"]:
                                  key="repricing_preset_chart")
 
 # ============================================================================
-# Bonus panel: rolling beta through time
+# Bonus panel: rolling beta through time -- gated behind `7 in unlocked_steps`
+# (unlocked alongside 5/6 by the "Run repricing simulation" button above),
+# so it only shows up once the user has been through the whole flow, not
+# right after building a portfolio.
 # ============================================================================
 
-step_anchor(7)
-animate_container("bonus_box", 7, animate_now)
-with st.expander("Bonus: When did your portfolio become an AI fund? (rolling beta through time)", key="bonus_box"):
-    # Reuses user_rolling_full/spy_rolling computed once in the Computation
-    # block above -- not recomputed here. This is the only place that series
-    # is rendered now that the masthead's sparkline preview is gone (see the
-    # comment above the masthead's st.markdown calls).
-    if user_rolling_full.empty:
-        st.warning("Not enough history for this portfolio to compute a rolling beta series.")
-    else:
-        fig5 = render_rolling_beta_chart(user_rolling_full, spy_rolling, "Your portfolio")
-        st.plotly_chart(fig5, theme=None, width="stretch", config=PLOTLY_CONFIG)
-        st.caption("Series starts once all constituents (yours and the AI basket's) have 252 trading days of overlap.")
+if 7 in st.session_state["unlocked_steps"]:
+    step_anchor(7)
+    animate_container("bonus_box", 7, animate_now)
+    with st.expander("Bonus: When did your portfolio become an AI fund? (rolling beta through time)", key="bonus_box"):
+        # Reuses user_rolling_full/spy_rolling computed once in the Computation
+        # block above -- not recomputed here. This is the only place that series
+        # is rendered now that the masthead's sparkline preview is gone (see the
+        # comment above the masthead's st.markdown calls).
+        if user_rolling_full.empty:
+            st.warning("Not enough history for this portfolio to compute a rolling beta series.")
+        else:
+            fig5 = render_rolling_beta_chart(user_rolling_full, spy_rolling, "Your portfolio")
+            st.plotly_chart(fig5, theme=None, width="stretch", config=PLOTLY_CONFIG)
+            st.caption("Series starts once all constituents (yours and the AI basket's) have 252 trading days of overlap.")
 
 st.markdown("---")
-st.caption(
-    f"Demo universe: {len(universe)} tickers cached in data/prices.db. This assumes a fixed-weight, "
-    "daily-rebalanced portfolio, so it ignores real-world drift and trading costs. See LIMITATIONS.md "
-    "(Module 4) and outputs/m4_methodology.md for the full detail. Every Module 1 and Module 3 "
-    "limitation applies here too."
-)
+with st.expander("See methodology", key="meth_footer_limitations"):
+    st.caption(
+        f"Demo universe: {len(universe)} tickers cached in data/prices.db. This assumes a fixed-weight, "
+        "daily-rebalanced portfolio, so it ignores real-world drift and trading costs. See LIMITATIONS.md "
+        "(Module 4) and outputs/m4_methodology.md for the full detail. Every Module 1 and Module 3 "
+        "limitation applies here too."
+    )
 
 # Persistent footer watermark -- see the .app-footer rule in the page's <style>
 # block for why it's plain text (no link) and deliberately quiet.

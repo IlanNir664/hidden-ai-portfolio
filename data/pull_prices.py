@@ -55,17 +55,38 @@ XRAY_UNIVERSE = {
     "International": ["VXUS", "VEA", "VWO", "IEFA", "IEMG"],
     "Bonds / Income": ["BND", "AGG", "IEF", "SHY", "LQD", "HYG", "JEPI"],
     "Commodities / Alt": ["IAU", "SLV", "DBC"],
+    # Enterprise/infrastructure names the AI trade actually runs through --
+    # networking, hybrid-cloud/hardware, and the security/data/workflow
+    # software AI deployments depend on -- as distinct from the consumer-
+    # facing/pure-growth names already in "Mega-cap / Growth Stocks" below.
+    # Priority addition: this app's whole premise is measuring AI exposure,
+    # and these were some of the most directly AI-exposed names missing from
+    # the universe.
+    "AI Infrastructure": ["IBM", "CSCO", "ANET", "DELL", "SNOW", "CRWD", "PANW", "NOW"],
+    # Chip-design/fab-equipment names -- distinct from AI Infrastructure's
+    # software/networking angle and from the handful of chipmakers already
+    # scattered in the AI basket/Mega-cap group (AVGO, MU, QCOM, AMD): these
+    # are the analog/equipment side of the same trade (ASML makes the
+    # lithography machines the whole industry depends on).
+    "Semiconductors": ["TXN", "LRCX", "KLAC", "ASML"],
     "Mega-cap / Growth Stocks": [
         "TSLA", "AMD", "PLTR", "NFLX", "ORCL", "CRM", "INTC", "MU", "QCOM",
-        "ADBE", "UBER", "SHOP", "COIN",
+        "ADBE", "UBER", "SHOP", "COIN", "PYPL", "SOFI", "RBLX",
     ],
     # BRK-B: Yahoo Finance's own symbol for Berkshire Hathaway Class B is "BRK-B"
     # (hyphen, not the NYSE-style "BRK.B" or a plain "BRKB") -- used as-is below.
-    "Financials": ["JPM", "BAC", "V", "MA", "BRK-B", "GS"],
-    "Energy": ["XOM", "CVX"],
-    "Healthcare": ["JNJ", "UNH", "LLY", "PFE"],
-    "Consumer": ["WMT", "COST", "HD", "MCD", "NKE", "DIS", "KO", "PG", "PEP"],
-    "Industrials": ["BA", "CAT", "GE"],
+    "Financials": ["JPM", "BAC", "V", "MA", "BRK-B", "GS", "WFC", "C", "AXP", "MS", "SCHW", "BLK"],
+    "Energy": ["XOM", "CVX", "COP"],
+    "Healthcare": ["JNJ", "UNH", "LLY", "PFE", "MRK", "ABBV", "ABT", "TMO", "CVS", "AMGN"],
+    "Consumer": [
+        "WMT", "COST", "HD", "MCD", "NKE", "DIS", "KO", "PG", "PEP", "SBUX", "TGT",
+        "LOW", "CMG", "BKNG", "ABNB",
+    ],
+    "Industrials": ["BA", "CAT", "GE", "HON", "UPS", "LMT"],
+    # Popular household-name carriers, missing entirely from the universe
+    # until now despite being some of the most widely held income/value
+    # stocks a self-directed investor would search for.
+    "Communication Services": ["T", "VZ", "TMUS"],
 }
 
 ALL_TICKERS = [t for group in TICKER_GROUPS.values() for t in group]

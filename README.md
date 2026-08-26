@@ -46,7 +46,7 @@ believe are diversified, plus an interactive app that measures it for *your* por
 The [live app](https://portfolio-xray.streamlit.app) walks through the same argument
 as this README, one step at a time. It opens with the S&P 500 concentration chart
 above as the proof that a fund's name can stay the same while what it actually holds
-drifts underneath it. From there you build a portfolio out of a 100-ticker universe of
+drifts underneath it. From there you build a portfolio out of a 140-ticker universe of
 popular ETFs and widely held single stocks (or just load a preset), then calculate your
 effective AI exposure, the regression beta, against your naive holdings weight, and see
 where you land next to QQQ, SPY, VT, 60/40, and RSP. There's a panel showing what your
@@ -209,7 +209,7 @@ hidden-ai-portfolio/
 ├── data/
 │   ├── pull_prices.py         # yfinance → SQLite
 │   ├── schema.sql
-│   └── prices.db              # 100 tickers, daily adjusted close
+│   └── prices.db              # 140 tickers, daily adjusted close
 ├── outputs/                   # charts, findings, per-module methodology, CSVs
 ├── tests/                     # pytest suite incl. the gate check
 ├── hidden_ai_portfolio_methodology.md

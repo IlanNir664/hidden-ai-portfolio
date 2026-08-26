@@ -150,7 +150,7 @@ alongside the analysis, not after -- per the project's rigor rule (see
 
 ## Module 4 -- The Portfolio X-Ray App
 
-- **The ~100-ticker demo universe is fixed, not a general portfolio tool.**
+- **The ~140-ticker demo universe is fixed, not a general portfolio tool.**
   The app can only price a portfolio built from tickers already cached in
   `data/prices.db` -- it does not fetch new tickers at runtime. Beyond the
   original research tickers and the six low/near-zero-AI reference ETFs
