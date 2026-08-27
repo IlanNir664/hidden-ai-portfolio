@@ -145,13 +145,9 @@ DONUT_LABEL_MIN_PCT = 5.0  # segments below this weight get no outside label, ho
 # order matters -- it's the order tickers appear as multiselect tags and
 # weight-editor rows on first load. Values are percent (0-100), summing to 100.
 DEFAULT_PORTFOLIO = {
-    "NVDA": 5.0,
-    "QQQM": 14.0,
-    "VOO": 55.0,
-    "AAPL": 3.0,
-    "MU": 3.0,
-    "SCHD": 5.0,
-    "VXUS": 15.0,
+    "VOO": 65.0,
+    "QQQM": 20.0,
+    "AAPL": 15.0,
 }
 
 PRESETS = {
@@ -926,6 +922,15 @@ st.markdown(f"""
     .stButton button::after {{ content: " ]"; opacity: 0.65; }}
     .stButton button:hover {{ background-color: {PANEL_BG_HOVER}; border-color: {LIME}; box-shadow: 0 0 16px rgba(57,255,110,0.25); }}
 
+    /* "Remove all" (Step 1 ticker chips) -- same flat utility-button shape as
+       above, recolored red since this is a destructive action (wipes the
+       whole portfolio), not a neutral one like Add/Load preset. */
+    .st-key-remove_all_tickers button {{ color: {NEG_RED} !important; border-color: {NEG_RED} !important; }}
+    .st-key-remove_all_tickers button:hover {{
+        background-color: rgba(255,68,51,0.12) !important; border-color: {NEG_RED} !important;
+        box-shadow: 0 0 16px rgba(255,68,51,0.3);
+    }}
+
     /* Shared "primary CTA" button style -- one rule block, applied to every
        key that needs the loud treatment (solid green fill, near-black text,
        large, centered) instead of the muted outline every other .stButton uses.
@@ -994,6 +999,17 @@ st.markdown(f"""
     }}
     .st-key-repricing_gallery_expander [data-testid="stExpander"] {{
         background-color: transparent; border: none;
+    }}
+
+    /* Step 0's "Why this exists" toggle -- this is the entry point to the
+       whole app's premise, so its summary line reads at closer to
+       .section-title weight/size instead of a plain small caption like a
+       generic expander header. */
+    .st-key-step0_why_expander summary p {{
+        font-size: 1.5rem !important; font-weight: 800 !important;
+    }}
+    .st-key-step0_why_expander summary [data-testid="stIconMaterial"] {{
+        font-size: 1.5rem !important;
     }}
 
     /* Methodology/caveat toggle expanders (v4) -- collapsed-by-default home
@@ -1461,7 +1477,7 @@ STEP_NAMES = {0: "Why", 1: "Build", 2: "Headline", 3: "Last year", 4: "Compare",
               5: "Repricing", 6: "Menu", 7: "Bonus"}
 
 if "unlocked_steps" not in st.session_state:
-    st.session_state["unlocked_steps"] = {0}
+    st.session_state["unlocked_steps"] = {0, 1}
 
 # Button-gated reveal animation -- shared by every "click to reveal already-
 # computed results" gate in this app (currently: the AI%-calculation gate
@@ -1686,8 +1702,8 @@ render_scroll_sync_script()
 # ============================================================================
 
 step_anchor(0)
-section_header("0", "Why this exists")
-with st.container(border=True):
+st.markdown('<div class="section-label">STEP 0</div>', unsafe_allow_html=True)
+with st.expander("Why this exists", expanded=False, key="step0_why_expander"):
     st.markdown(
         "Passive investors buy \"diversified\" funds expecting broad, stable exposure. "
         "But an index's composition drifts as its constituent weights shift over time, and "
@@ -1719,13 +1735,6 @@ with st.container(border=True):
     )
 
     st.markdown("**This app measures the same drift for any portfolio you build below.**")
-
-    if 1 not in st.session_state["unlocked_steps"]:
-        st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
-        if st.button("Let's build it together →", key="step0_continue", type="primary"):
-            if unlock_step(1):
-                st.session_state["_flash_animate"] = {1}
-            st.rerun()
 
 # ============================================================================
 # Sidebar -- diagnostics, quick presets, ticker universe browser
@@ -1915,100 +1924,13 @@ with st.container(border=True, key="step1_box"):
             "your mix adds up to 100%."
         )
 
-    weights, errors, warnings_ = validate_weights(weights_pct_map)
-
-    for w in warnings_:
-        st.info(w)
-
-    if errors:
-        for e in errors:
-            st.error(e)
-        total = sum(weights_pct_map.values())
-        if total > 0:
-            if st.button("Normalize weights to 100%"):
-                st.session_state["weight_map"] = {t: w / total * 100.0 for t, w in weights_pct_map.items()}
-                st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
-                st.rerun()
-        st.stop()
-
-# ============================================================================
-# No cascade unlock here -- every step past Step 1 (2/3/4 behind "Calculate
-# my AI %", 5/6/7 behind "Run repricing simulation") is gated behind an
-# explicit button + progress animation instead. Bonus (7) used to auto-unlock
-# the instant a valid portfolio existed, right alongside Step 1 -- moved to
-# unlock with 5/6 instead (see that gate below) so it only appears once the
-# user has been through the whole flow, not right after building a portfolio.
-# ============================================================================
-
-# ============================================================================
-# Computation -- spinner covers exactly this block. The get_*/load_* calls are
-# @st.cache_data, so this is only slow on a cold cache (first load, or a DB
-# change); on every later rerun of an already-computed portfolio they return
-# instantly and the spinner flashes too briefly to notice, by design -- no
-# special "is this cached?" branching needed, that's what st.cache_data gives us.
-# ============================================================================
-
-with st.spinner("X-raying your portfolio…"):
-    simple_returns = get_simple_returns(prices)
-    ai_log = get_ai_log(prices)
-    rest_factor_252, ai_756, rest_factor_756 = get_rest_factors(prices)
-    ai_shock_no_bubble, rest_shock_no_bubble = get_no_bubble_shocks(prices)
-    m2_shocks = get_m2_shocks()
-    m1_table = get_m1_table()
-    spy_rolling = get_spy_rolling_beta(prices)
-
-    user_simple = fl.build_portfolio_simple_returns(simple_returns, weights)
-    user_log = fl.to_log_returns(user_simple)
-
-    overlap = fl.overlapping_obs_count(user_log, ai_log)
-    if overlap < fl.MIN_REGRESSION_OBS:
-        st.error(
-            f"Only {overlap} overlapping trading day(s) between these tickers and the AI basket. "
-            f"That's not enough to compute a beta, so try a different mix."
-        )
-        st.stop()
-
-    single = fl.single_factor_regress(user_log, ai_log)
-    two_factor = fl.two_factor_regress(user_log, ai_log, rest_factor_252)
-
-    # Cap-weighted sensitivity check for the "Why these 8 tickers?" expander only
-    # -- see get_ai_log_capweighted's own comment for why this doesn't touch the
-    # headline number or anything downstream of it.
-    ai_log_capweighted = get_ai_log_capweighted(prices)
-    beta_pct_capweighted = fl.single_factor_regress(user_log, ai_log_capweighted)["beta"] * 100
-
-    n_obs = single["n_obs"]
-
-    # Realized last-year return (Step 3 panel) -- SIMPLE-return compounding, indexed
-    # to 100 at the window's start, same convention as m2_replay.py's crash-replay
-    # charts. Aligned against SPY over the SAME trailing dates the user's own
-    # portfolio has data for, so a short-history holding doesn't get compared
-    # against a SPY window it didn't actually overlap with.
-    user_indexed, spy_indexed, realized_n_days = fl.indexed_cumulative_returns(
-        user_simple, simple_returns["SPY"], fl.WINDOW
-    )
-    user_return_pct = user_indexed.iloc[-1] - 100
-    spy_return_pct = spy_indexed.iloc[-1] - 100
-
-    beta_pct = single["beta"] * 100
-    r_squared = single["r_squared"]
-
-    # direct weight: see factor_lib.compute_direct_weight_pct for the resolution rules
-    # (AI-basket member / named reference portfolio / known-zero bond-commodity fund /
-    # genuinely unresolvable). Pulled out of this file so it's unit-testable without
-    # Streamlit -- see tests/test_factor_lib.py.
-    user_direct_pct, unresolvable = fl.compute_direct_weight_pct(weights)
-
-    proj_no_bubble = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], ai_shock_no_bubble, rest_shock_no_bubble) * 100
-    proj_2022 = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["2022_ai_shock"], m2_shocks["2022_rest_shock"]) * 100
-    proj_2008 = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["gfc_ai_shock"], m2_shocks["gfc_rest_shock"]) * 100
-    proj_dotcom = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"]) * 100
-
-    # Rolling beta -- computed exactly once here, reused by the Step 6 bonus
-    # expander further down (see its own comment). Not wrapped in
-    # @st.cache_data since it depends on the user's arbitrary weights dict;
-    # it's a cheap vectorized computation either way.
-    user_rolling_full = fl.rolling_beta(user_log, ai_log, fl.WINDOW)
+# Loaded early (before the weights-validity gate below) since the sector
+# gallery just below needs them for its AI% column even when the current
+# portfolio is empty/invalid (e.g. right after "Remove all") -- cached, so
+# this costs nothing extra once the Computation block further down reloads
+# them for the user's own portfolio.
+simple_returns = get_simple_returns(prices)
+ai_log = get_ai_log(prices)
 
 # ============================================================================
 # Sector preset gallery -- one-click themed portfolios, shown right after
@@ -2017,7 +1939,11 @@ with st.spinner("X-raying your portfolio…"):
 # manual ticker/weight table above, which is untouched). Deliberately NOT
 # gated behind "2 in unlocked_steps": a user should be able to browse and
 # pick a themed mix before ever calculating, the same way they can already
-# pick from the sidebar's "Quick presets" dropdown before calculating.
+# pick from the sidebar's "Quick presets" dropdown before calculating. Also
+# rendered BEFORE the weights-validity check further down (not just before
+# the unlocked_steps gate) -- an empty/invalid portfolio (e.g. right after
+# "Remove all") still needs a way back into a valid one, and this gallery is
+# that way, so it can't sit behind a gate the user just broke.
 #
 # What IS gated is the AI% number inside each card's donut hole (see
 # `reveal` on render_portfolio_donut): pre-calculate, every card shows only
@@ -2031,44 +1957,6 @@ with st.spinner("X-raying your portfolio…"):
 
 reveal_sector_ai = 2 in st.session_state["unlocked_steps"]
 
-# Always shown pre-Calculate (not just once the portfolio differs from the
-# default) -- a big "?"-holed wheel that mirrors Step 1's table live, so
-# there's always something visual to X-ray before the button is pressed, not
-# just a table of numbers. Hidden once Step 2 unlocks: the "Portfolio at a
-# glance" donut_box below (see the "Your allocation (donut) + Panel 1" section
-# further down) takes over from that point, showing the SAME weights with the
-# real number revealed -- keeping both on screen at once would just duplicate
-# the same wheel twice.
-if 2 not in st.session_state["unlocked_steps"]:
-    # ----------------------------------------------------------------------------
-    # Live preview of the user's own (not-yet-calculated) portfolio -- same "?"
-    # placeholder donut style as the sector cards just below, so both speak one
-    # visual language: composition now, number after Calculate. Reads
-    # weights_pct_map directly, so it updates on every edit to Step 1's table
-    # above.
-    #
-    # The "Normalize to 100%" button reuses the exact same proportional-scaling
-    # math as Step 1's own "Normalize weights to 100%" button (which only ever
-    # appears in the weights-don't-sum-to-100 error state, which st.stop()s
-    # before reaching this point) -- same behavior, just also reachable here
-    # without having to first break your weights to see it.
-    # ----------------------------------------------------------------------------
-    st.markdown(
-        '<div class="section-label">YOUR ALLOCATION SO FAR</div>'
-        '<div class="section-title">Your current mix</div>',
-        unsafe_allow_html=True,
-    )
-    with st.container(border=True, key="your_mix_preview"):
-        preview_weights_frac = {t: w / 100.0 for t, w in weights_pct_map.items()}
-        preview_donut = render_portfolio_donut(
-            preview_weights_frac, 0.0,
-            reveal=False,
-        )
-        st.plotly_chart(preview_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
-                         key="your_mix_chart")
-        st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in weights_pct_map.items()))
-
-    st.markdown('<div style="margin-top:10px;"></div>', unsafe_allow_html=True)
 st.markdown('<div class="section-label">MORE OPTIONS</div>', unsafe_allow_html=True)
 # Collapsed by default -- this is a secondary path (the manual table above is
 # the primary one), so it stays out of the way until the user actually wants
@@ -2156,6 +2044,143 @@ with st.expander("Or start from a popular portfolio", expanded=False, key="secto
         "universe, not investment advice or a real sector fund's methodology. Same fixed-weight, "
         "daily-rebalanced assumption as the rest of this tool."
     )
+
+# Always shown pre-Calculate (not just once the portfolio differs from the
+# default) -- a big "?"-holed wheel that mirrors Step 1's table live, so
+# there's always something visual to X-ray before the button is pressed, not
+# just a table of numbers. Hidden once Step 2 unlocks: the "Portfolio at a
+# glance" donut_box below (see the "Your allocation (donut) + Panel 1" section
+# further down) takes over from that point, showing the SAME weights with the
+# real number revealed -- keeping both on screen at once would just duplicate
+# the same wheel twice. Sits after the sector-preset gallery above so it
+# lands right between the ticker/weight table's "more options" and the
+# Calculate button -- and, like the gallery, renders even when the current
+# weights are empty/invalid, so "Remove all" doesn't strand the user on a
+# blank Step 1.
+if 2 not in st.session_state["unlocked_steps"]:
+    st.markdown('<div style="margin-top:10px;"></div>', unsafe_allow_html=True)
+    # ----------------------------------------------------------------------------
+    # Live preview of the user's own (not-yet-calculated) portfolio -- same "?"
+    # placeholder donut style as the sector cards just below, so both speak one
+    # visual language: composition now, number after Calculate. Reads
+    # weights_pct_map directly, so it updates on every edit to Step 1's table
+    # above.
+    #
+    # The "Normalize to 100%" button reuses the exact same proportional-scaling
+    # math as Step 1's own "Normalize weights to 100%" button (which only ever
+    # appears in the weights-don't-sum-to-100 error state, which st.stop()s
+    # before reaching this point) -- same behavior, just also reachable here
+    # without having to first break your weights to see it.
+    # ----------------------------------------------------------------------------
+    st.markdown(
+        '<div class="section-label">YOUR ALLOCATION SO FAR</div>'
+        '<div class="section-title">Your current mix</div>',
+        unsafe_allow_html=True,
+    )
+    with st.container(border=True, key="your_mix_preview"):
+        preview_weights_frac = {t: w / 100.0 for t, w in weights_pct_map.items()}
+        preview_donut = render_portfolio_donut(
+            preview_weights_frac, 0.0,
+            reveal=False,
+        )
+        st.plotly_chart(preview_donut, theme=None, width="stretch", config=PLOTLY_CONFIG,
+                         key="your_mix_chart")
+        st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in weights_pct_map.items()))
+
+weights, errors, warnings_ = validate_weights(weights_pct_map)
+
+for w in warnings_:
+    st.info(w)
+
+if errors:
+    for e in errors:
+        st.error(e)
+    total = sum(weights_pct_map.values())
+    if total > 0:
+        if st.button("Normalize weights to 100%"):
+            st.session_state["weight_map"] = {t: w / total * 100.0 for t, w in weights_pct_map.items()}
+            st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
+            st.rerun()
+    st.stop()
+
+# ============================================================================
+# No cascade unlock here -- every step past Step 1 (2/3/4 behind "Calculate
+# my AI %", 5/6/7 behind "Run repricing simulation") is gated behind an
+# explicit button + progress animation instead. Bonus (7) used to auto-unlock
+# the instant a valid portfolio existed, right alongside Step 1 -- moved to
+# unlock with 5/6 instead (see that gate below) so it only appears once the
+# user has been through the whole flow, not right after building a portfolio.
+# ============================================================================
+
+# ============================================================================
+# Computation -- spinner covers exactly this block. The get_*/load_* calls are
+# @st.cache_data, so this is only slow on a cold cache (first load, or a DB
+# change); on every later rerun of an already-computed portfolio they return
+# instantly and the spinner flashes too briefly to notice, by design -- no
+# special "is this cached?" branching needed, that's what st.cache_data gives us.
+# ============================================================================
+
+with st.spinner("X-raying your portfolio…"):
+    simple_returns = get_simple_returns(prices)
+    ai_log = get_ai_log(prices)
+    rest_factor_252, ai_756, rest_factor_756 = get_rest_factors(prices)
+    ai_shock_no_bubble, rest_shock_no_bubble = get_no_bubble_shocks(prices)
+    m2_shocks = get_m2_shocks()
+    m1_table = get_m1_table()
+    spy_rolling = get_spy_rolling_beta(prices)
+
+    user_simple = fl.build_portfolio_simple_returns(simple_returns, weights)
+    user_log = fl.to_log_returns(user_simple)
+
+    overlap = fl.overlapping_obs_count(user_log, ai_log)
+    if overlap < fl.MIN_REGRESSION_OBS:
+        st.error(
+            f"Only {overlap} overlapping trading day(s) between these tickers and the AI basket. "
+            f"That's not enough to compute a beta, so try a different mix."
+        )
+        st.stop()
+
+    single = fl.single_factor_regress(user_log, ai_log)
+    two_factor = fl.two_factor_regress(user_log, ai_log, rest_factor_252)
+
+    # Cap-weighted sensitivity check for the "Why these 8 tickers?" expander only
+    # -- see get_ai_log_capweighted's own comment for why this doesn't touch the
+    # headline number or anything downstream of it.
+    ai_log_capweighted = get_ai_log_capweighted(prices)
+    beta_pct_capweighted = fl.single_factor_regress(user_log, ai_log_capweighted)["beta"] * 100
+
+    n_obs = single["n_obs"]
+
+    # Realized last-year return (Step 3 panel) -- SIMPLE-return compounding, indexed
+    # to 100 at the window's start, same convention as m2_replay.py's crash-replay
+    # charts. Aligned against SPY over the SAME trailing dates the user's own
+    # portfolio has data for, so a short-history holding doesn't get compared
+    # against a SPY window it didn't actually overlap with.
+    user_indexed, spy_indexed, realized_n_days = fl.indexed_cumulative_returns(
+        user_simple, simple_returns["SPY"], fl.WINDOW
+    )
+    user_return_pct = user_indexed.iloc[-1] - 100
+    spy_return_pct = spy_indexed.iloc[-1] - 100
+
+    beta_pct = single["beta"] * 100
+    r_squared = single["r_squared"]
+
+    # direct weight: see factor_lib.compute_direct_weight_pct for the resolution rules
+    # (AI-basket member / named reference portfolio / known-zero bond-commodity fund /
+    # genuinely unresolvable). Pulled out of this file so it's unit-testable without
+    # Streamlit -- see tests/test_factor_lib.py.
+    user_direct_pct, unresolvable = fl.compute_direct_weight_pct(weights)
+
+    proj_no_bubble = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], ai_shock_no_bubble, rest_shock_no_bubble) * 100
+    proj_2022 = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["2022_ai_shock"], m2_shocks["2022_rest_shock"]) * 100
+    proj_2008 = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["gfc_ai_shock"], m2_shocks["gfc_rest_shock"]) * 100
+    proj_dotcom = fl.project_scenario(two_factor["beta_ai"], two_factor["beta_rest"], m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"]) * 100
+
+    # Rolling beta -- computed exactly once here, reused by the Step 6 bonus
+    # expander further down (see its own comment). Not wrapped in
+    # @st.cache_data since it depends on the user's arbitrary weights dict;
+    # it's a cheap vectorized computation either way.
+    user_rolling_full = fl.rolling_beta(user_log, ai_log, fl.WINDOW)
 
 # ============================================================================
 # Your allocation (donut) + Panel 1: Headline (hero card) -- both gated behind
