@@ -4,6 +4,7 @@ Source: yfinance, max available history, auto-adjusted close (splits + dividends
 Run: python data/pull_prices.py
 """
 
+import argparse
 import sqlite3
 import time
 from pathlib import Path
@@ -145,17 +146,87 @@ def pull_ticker(ticker: str) -> list[tuple[str, str, float]]:
     return rows
 
 
+def refresh_ticker(conn: sqlite3.Connection, ticker: str) -> dict | None:
+    """Extend one already-cached ticker's series up to the latest available date.
+
+    Fetches only the tail from its current last date forward (not a full
+    re-pull), so this is cheap and idempotent. Returns None on a download
+    error; otherwise a dict with new_rows == 0 for a ticker that has nothing
+    newer than what's cached (already current, or delisted/no longer trading
+    -- both look the same from here, so callers should say so rather than
+    treating it as a failure).
+    """
+    last_date = conn.execute(
+        "SELECT MAX(date) FROM prices WHERE ticker = ?", (ticker,)
+    ).fetchone()[0]
+    try:
+        hist = yf.Ticker(ticker).history(start=last_date, auto_adjust=True)
+    except Exception as e:  # same rationale as pull_ticker: one bad symbol can't crash the run
+        print(f"  SKIPPED {ticker}: refresh download error ({e})")
+        return None
+    if hist.empty:
+        return {"new_rows": 0, "last_date": last_date}
+    rows = [
+        (idx.strftime("%Y-%m-%d"), ticker, float(row["Close"]))
+        for idx, row in hist.iterrows()
+    ]
+    new_rows = [r for r in rows if r[0] > last_date]
+    if new_rows:
+        # Write the whole fetched tail, including the overlapping last_date row
+        # (INSERT OR REPLACE on the (date, ticker) primary key), not just the
+        # new_rows slice -- cheap insurance against yfinance revising a recent
+        # close (e.g. a late dividend/split adjustment).
+        conn.executemany(
+            "INSERT OR REPLACE INTO prices (date, ticker, adj_close) VALUES (?, ?, ?)",
+            rows,
+        )
+        conn.commit()
+        last_date = rows[-1][0]
+    return {"new_rows": len(new_rows), "last_date": last_date}
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--refresh", action="store_true",
+        help="Also extend every ticker already cached in the DB up to the latest "
+             "available date, before pulling any genuinely new tickers. Default "
+             "(no flag): cached tickers are left untouched, exactly as before -- "
+             "nothing silently re-downloads.",
+    )
+    args = parser.parse_args()
+
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
 
-    # Tickers already cached from a prior run are left untouched, not re-fetched.
-    # Re-pulling an existing ticker with a fresh yfinance call could append newer
-    # trading days to its series -- that would shift the trailing 252/756-day
-    # windows m1/m3 use ("tail(window)" of whatever's latest) and silently break
-    # the byte-identical-output guarantee this task requires. Universe expansion
-    # must be strictly additive at the data layer, not just at the code layer.
+    # Tickers already cached from a prior run are left untouched by default, not
+    # re-fetched. Re-pulling an existing ticker with a fresh yfinance call could
+    # append newer trading days to its series -- that would shift the trailing
+    # 252/756-day windows m1/m3 use ("tail(window)" of whatever's latest) and
+    # silently break the byte-identical-output guarantee this task requires.
+    # Universe expansion must be strictly additive at the data layer, not just
+    # at the code layer -- UNLESS --refresh is explicitly passed, which exists
+    # precisely to bring already-cached tickers back in sync with newer ones
+    # (see LIMITATIONS.md's forward-fill entry for why that sync matters).
     already_cached = {row[0] for row in conn.execute("SELECT DISTINCT ticker FROM prices")}
+
+    if args.refresh:
+        print(f"[refresh] extending {len(already_cached)} already-cached ticker(s) to latest available date...")
+        extended, unchanged, failed = [], [], []
+        for ticker in sorted(already_cached):
+            result = refresh_ticker(conn, ticker)
+            if result is None:
+                failed.append(ticker)
+            elif result["new_rows"] == 0:
+                print(f"  {ticker}: no data newer than {result['last_date']} "
+                      f"(already current, or no longer trading)")
+                unchanged.append(ticker)
+            else:
+                print(f"  {ticker}: +{result['new_rows']} row(s), now through {result['last_date']}")
+                extended.append(ticker)
+            time.sleep(0.3)  # be polite to the API
+        print(f"[refresh] done: {len(extended)} extended, {len(unchanged)} already current/delisted, "
+              f"{len(failed)} failed.\n")
 
     all_groups = dict(TICKER_GROUPS)
     all_groups.update(XRAY_UNIVERSE)
@@ -167,7 +238,8 @@ def main() -> None:
         print(f"[{group}]")
         for ticker in tickers:
             if ticker in already_cached:
-                print(f"  {ticker}: already cached from a prior run, leaving untouched")
+                note = " (refreshed above)" if args.refresh else ""
+                print(f"  {ticker}: already cached from a prior run, leaving untouched{note}")
                 continue
             if ticker in seen:
                 print(f"  {ticker}: already pulled under an earlier group, skipping re-download")
@@ -193,7 +265,34 @@ def main() -> None:
         print(f"Skipped ({len(skipped)}): {', '.join(skipped)}")
     else:
         print("Skipped: none")
+
+    print_last_date_distribution(conn)
     conn.close()
+
+
+def print_last_date_distribution(conn: sqlite3.Connection) -> None:
+    """Per-ticker last date (MAX(date) grouped by ticker), not the panel's
+    overall max -- the panel's max is the union across tickers and hides any
+    ticker still lagging behind (that gap is exactly what silently corrupted
+    every regression via pandas' forward-filling pct_change default; see
+    LIMITATIONS.md). A single date here means the DB is genuinely in sync.
+    """
+    rows = conn.execute("SELECT ticker, MAX(date) AS last_date FROM prices GROUP BY ticker").fetchall()
+    by_date: dict[str, list[str]] = {}
+    for ticker, last_date in rows:
+        by_date.setdefault(last_date, []).append(ticker)
+
+    print(f"\nPer-ticker last date, {len(rows)} ticker(s):")
+    for date in sorted(by_date, reverse=True):
+        tickers = sorted(by_date[date])
+        print(f"  {date}: {len(tickers)} ticker(s)" + (f" -- {', '.join(tickers)}" if len(tickers) <= 8 else ""))
+
+    if len(by_date) == 1:
+        print("  All tickers end on the same date -- panel is in sync.")
+    else:
+        majority_date = max(by_date, key=lambda d: len(by_date[d]))
+        print(f"  NOT in sync. Majority date: {majority_date}. "
+              f"Laggard ticker(s) not on that date: {', '.join(sorted(t for d, ts in by_date.items() if d != majority_date for t in ts))}")
 
 
 if __name__ == "__main__":

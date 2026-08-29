@@ -9,6 +9,7 @@ NEVER claim a bubble exists or a crash will happen. Every projected number this
 module helps produce is conditional: "if a 2000-style repricing occurred...".
 """
 
+import math
 import sqlite3
 from pathlib import Path
 
@@ -144,6 +145,89 @@ def merge_selected_weights(selected: list, existing_weights: dict) -> dict:
     if not any(t in existing_weights for t in selected):
         return equal_split_weights(selected)
     return {t: existing_weights.get(t, 0.0) for t in selected}
+
+
+def validate_weights(weight_map: dict):
+    """Returns (weights_dict, errors, warnings). weights_dict is None if invalid.
+
+    Duplicate/unsupported tickers can't reach this function: the app's multiselect
+    only offers tickers already in the DB universe, and the manual-entry fallback
+    validates membership before adding to the selection. Individual weight VALUES
+    are a different story -- the shareable-link path (decode_portfolio_query)
+    writes straight into weight_map and bypasses the number_input widgets' min/max
+    bounds entirely, so a non-finite or negative weight CAN reach this function via
+    a hand-edited or corrupted "?p=" link. This checks for that itself rather than
+    trusting the caller.
+    """
+    errors, warnings = [], []
+    if not weight_map:
+        errors.append("Select at least one ticker above.")
+        return None, errors, warnings
+
+    bad = sorted(t for t, w in weight_map.items() if not math.isfinite(w) or w < 0)
+    if bad:
+        errors.append(f"Invalid weight(s) for: {', '.join(bad)}.")
+        return None, errors, warnings
+
+    total = sum(weight_map.values())
+    if abs(total - 100.0) > 0.01:
+        errors.append(f"Your weights add up to {total:.2f}%, not 100%.")
+        return None, errors, warnings
+
+    return {t: w / 100.0 for t, w in weight_map.items()}, errors, warnings
+
+
+# ============================================================================
+# Shareable-link encoding (X-ray app polish pass) -- serializes {ticker: weight_pct}
+# into a single URL query param value so a portfolio can be attached to an email/
+# LinkedIn message and land the recipient back in this exact state, not just a
+# blank app. Deliberately simple (TICKER:WEIGHT pairs, comma-joined) rather than
+# base64/JSON -- stays human-readable in the address bar, and Streamlit's own
+# st.query_params already handles URL-escaping the joined string on write/read.
+# ============================================================================
+
+def encode_portfolio_query(weights_pct_map: dict) -> str:
+    return ",".join(f"{ticker}:{weight:.2f}" for ticker, weight in weights_pct_map.items())
+
+
+def decode_portfolio_query(raw: str) -> dict | None:
+    """Parse a shareable-link "p" query param into {ticker: weight_pct}.
+
+    Returns None -- meaning "reject the whole link" -- the moment ANY pair's
+    weight is unparseable, not finite, negative, or over 100. This used to be
+    a best-effort parse that dropped only the bad pair, but that's what let a
+    single corrupted pair through silently: `?p=AAPL:nan` parses as a float,
+    passes both `nan > 100` and `nan < 0` (both False for NaN), and would have
+    reached build_portfolio_simple_returns' `.sum(axis=1)`, which skips NaN
+    silently -- producing a confident beta, risk badge and scenario for a
+    portfolio quietly missing a holding. `?p=AAPL:150` / `?p=AAPL:-50` would
+    instead have reached st.number_input(min_value=0, max_value=100, value=...)
+    and raised StreamlitValueAboveMaxError/BelowMinError, killing the whole page
+    for whoever opened the link. Neither failure mode requires hostile intent,
+    just a truncated paste -- so any single bad pair now invalidates the link
+    entirely; the caller falls back to the default portfolio and warns, rather
+    than either crashing or building a silently-wrong one.
+
+    Ticker membership in the app's universe is deliberately NOT checked here
+    (the caller filters against `universe`) -- an unrecognized ticker (renamed,
+    delisted, or just a typo) is a milder problem than a malformed weight and
+    is still handled per-ticker, not as a whole-link failure.
+    """
+    decoded = {}
+    for pair in raw.split(","):
+        ticker, sep, weight_str = pair.partition(":")
+        ticker = ticker.strip().upper()
+        if not sep or not ticker or not weight_str:
+            return None
+        try:
+            weight = float(weight_str)
+        except ValueError:
+            return None
+        if not math.isfinite(weight) or weight < 0 or weight > 100:
+            return None
+        decoded[ticker] = weight
+    return decoded if decoded else None
+
 
 # dataviz skill palette (light mode) -- shared across every chart in the project,
 # PNG or in-app, so research output and the X-ray app stay visually one system.
@@ -378,3 +462,224 @@ def project_scenario(beta_ai: float, beta_rest: float, ai_shock: float, rest_sho
     alpha/drift term -- see outputs/m3_methodology.md and LIMITATIONS.md).
     """
     return beta_ai * ai_shock + beta_rest * rest_shock
+
+
+# ============================================================================
+# Crash-conditional (piecewise) betas -- added to answer this project's own
+# loudest self-flagged limitation: a single symmetric OLS beta can't
+# distinguish "moves with the basket on the way up" from "moves with it on
+# the way down", and cross-asset correlations are well documented to rise
+# specifically during drawdowns. LIMITATIONS.md previously only confessed
+# this; these functions measure it instead.
+#
+# Specification (Henriksson-Merton / Bawa-Lindenberg form -- still LINEAR in
+# the factor, deliberately):
+#
+#     y = alpha + beta_up * x + beta_extra * (x * 1{x < 0}) + e
+#
+# so the down-day slope is beta_up + beta_extra. A quadratic (x^2) term was
+# considered and rejected: the scenario engine extrapolates ~25x outside the
+# daily fitting range (a -77.9% shock against +/-3% typical daily moves), and
+# a squared term extrapolated that far would dominate the projection entirely
+# while having no interpretable "% AI" reading. Piecewise-linear keeps both
+# the interpretation and a bounded extrapolation.
+# ============================================================================
+
+MIN_STATE_OBS = 30  # minimum up-days and down-days needed before a piecewise fit is trustworthy
+
+
+def downside_regress(y_log: pd.Series, x_log: pd.Series, window: int = WINDOW) -> dict:
+    """Single-factor piecewise regression: separate up-day and down-day betas.
+
+    Returns beta_up (slope on days the factor rose), beta_down (slope on days
+    it fell), and asymmetry = beta_down - beta_up -- positive means the
+    portfolio tracks the basket MORE closely when the basket is falling, which
+    is exactly the effect a symmetric beta averages away.
+
+    Raises ValueError (not a statsmodels crash) when either state has fewer
+    than MIN_STATE_OBS observations in the window; callers should fall back to
+    the symmetric beta and say so rather than showing an unstable split.
+    """
+    aligned = pd.concat([y_log, x_log], axis=1, keys=["y", "x"]).dropna().tail(window)
+    down_flag = (aligned["x"] < 0).astype(float)
+    n_down = int(down_flag.sum())
+    n_up = len(aligned) - n_down
+    if n_down < MIN_STATE_OBS or n_up < MIN_STATE_OBS:
+        raise ValueError(
+            f"Piecewise fit needs at least {MIN_STATE_OBS} up-days and {MIN_STATE_OBS} down-days; "
+            f"this window has {n_up} up and {n_down} down."
+        )
+    x_down = (aligned["x"] * down_flag).rename("x_down")
+    X = sm.add_constant(pd.concat([aligned["x"], x_down], axis=1))
+    model = sm.OLS(aligned["y"], X).fit()
+    beta_up = float(model.params["x"])
+    beta_down = float(model.params["x"] + model.params["x_down"])
+    return {
+        "beta_up": beta_up,
+        "beta_down": beta_down,
+        "asymmetry": beta_down - beta_up,
+        "alpha": float(model.params["const"]),
+        "r_squared": float(model.rsquared),
+        "n_obs": int(model.nobs),
+        "n_down_days": n_down,
+        "n_up_days": n_up,
+    }
+
+
+def two_factor_downside_regress(y_log: pd.Series, ai_log: pd.Series, rest_factor: pd.Series,
+                                window: int = WINDOW) -> dict:
+    """Two-factor version of downside_regress -- each factor gets its own down-state slope.
+
+        y = a + b_ai*ai + b_ai_dn*ai*1{ai<0} + b_rest*rest + b_rest_dn*rest*1{rest<0}
+
+    This is what the scenario engine needs: a crash scenario plugs a NEGATIVE
+    shock into both factors, so it should be multiplying the down-state slopes,
+    while the trend-continuation scenario plugs in a positive AI shock and
+    should be multiplying the up-state slope. Same MIN_STATE_OBS guard as the
+    single-factor version, applied to both factors.
+    """
+    aligned = pd.concat([y_log, ai_log, rest_factor], axis=1, keys=["y", "ai", "rest"]).dropna().tail(window)
+    ai_dn_flag = (aligned["ai"] < 0).astype(float)
+    rest_dn_flag = (aligned["rest"] < 0).astype(float)
+    n_ai_down, n_rest_down = int(ai_dn_flag.sum()), int(rest_dn_flag.sum())
+    n_ai_up, n_rest_up = len(aligned) - n_ai_down, len(aligned) - n_rest_down
+    if min(n_ai_down, n_ai_up, n_rest_down, n_rest_up) < MIN_STATE_OBS:
+        raise ValueError(
+            f"Piecewise two-factor fit needs at least {MIN_STATE_OBS} observations in every state; "
+            f"got AI {n_ai_up} up / {n_ai_down} down, rest {n_rest_up} up / {n_rest_down} down."
+        )
+    regressors = pd.concat(
+        [
+            aligned["ai"],
+            (aligned["ai"] * ai_dn_flag).rename("ai_dn"),
+            aligned["rest"],
+            (aligned["rest"] * rest_dn_flag).rename("rest_dn"),
+        ],
+        axis=1,
+    )
+    model = sm.OLS(aligned["y"], sm.add_constant(regressors)).fit()
+    return {
+        "beta_ai_up": float(model.params["ai"]),
+        "beta_ai_down": float(model.params["ai"] + model.params["ai_dn"]),
+        "beta_rest_up": float(model.params["rest"]),
+        "beta_rest_down": float(model.params["rest"] + model.params["rest_dn"]),
+        "alpha": float(model.params["const"]),
+        "r_squared": float(model.rsquared),
+        "n_obs": int(model.nobs),
+    }
+
+
+def project_scenario_conditional(betas: dict, ai_shock: float, rest_shock: float) -> float:
+    """Scenario projection using the state-matched betas from two_factor_downside_regress.
+
+    A negative shock is multiplied by that factor's DOWN-state beta, a positive
+    shock by its up-state beta -- so a crash scenario is projected with the
+    co-movement actually measured on down days, and the trend-continuation
+    scenario with the up-day slope. Reduces exactly to project_scenario() when
+    the up and down betas are equal.
+    """
+    beta_ai = betas["beta_ai_down"] if ai_shock < 0 else betas["beta_ai_up"]
+    beta_rest = betas["beta_rest_down"] if rest_shock < 0 else betas["beta_rest_up"]
+    return beta_ai * ai_shock + beta_rest * rest_shock
+
+
+# ============================================================================
+# Uncertainty on the headline number. The app's hero card previously showed a
+# point estimate with no error band anywhere in the UI -- the single most
+# standard thing a model-validation reviewer looks for. A moving-block
+# bootstrap is used rather than textbook OLS standard errors because daily
+# financial returns are autocorrelated and heteroskedastic (volatility
+# clusters), which biases classical standard errors down; resampling in
+# blocks preserves that local dependence structure.
+# ============================================================================
+
+BOOTSTRAP_DRAWS = 400
+BOOTSTRAP_BLOCK = 20    # trading days (~1 month) -- long enough to carry a volatility cluster
+BOOTSTRAP_CI = 0.90
+
+
+def bootstrap_beta_ci(y_log: pd.Series, x_log: pd.Series, window: int = WINDOW,
+                      n_draws: int = BOOTSTRAP_DRAWS, block: int = BOOTSTRAP_BLOCK,
+                      ci: float = BOOTSTRAP_CI, seed: int = 0) -> dict:
+    """Moving-block bootstrap confidence interval for the single-factor beta.
+
+    Resamples contiguous blocks of (y, x) pairs with replacement from the same
+    trailing window single_factor_regress uses, recomputing the OLS slope as
+    Cov(x,y)/Var(x) on each draw (algebraically the same slope, without the
+    statsmodels overhead, since only the slope is needed here).
+
+    Returns {"beta", "lo", "hi", "ci", "n_draws", "se_boot"} with beta the point
+    estimate on the actual window -- so callers can render "68% (61-76%)" without
+    a second regression call. se_boot is the bootstrap draws' standard deviation
+    (a Monte Carlo SE on the slope, distinct from the percentile interval width).
+    Raises ValueError if the window is shorter than one block.
+    """
+    aligned = pd.concat([y_log, x_log], axis=1, keys=["y", "x"]).dropna().tail(window)
+    n = len(aligned)
+    if n < block * 2:
+        raise ValueError(f"Need at least {block * 2} overlapping observations to block-bootstrap; got {n}.")
+    y = aligned["y"].to_numpy()
+    x = aligned["x"].to_numpy()
+
+    def slope(yy, xx):
+        xc = xx - xx.mean()
+        return float((xc * (yy - yy.mean())).sum() / (xc * xc).sum())
+
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(n / block))
+    starts = rng.integers(0, n - block + 1, size=(n_draws, n_blocks))
+    offsets = np.arange(block)
+    # (n_draws, n_blocks, block) -> (n_draws, n_blocks*block), trimmed back to n
+    idx = (starts[:, :, None] + offsets[None, None, :]).reshape(n_draws, -1)[:, :n]
+    draws = np.array([slope(y[row], x[row]) for row in idx])
+
+    tail = (1.0 - ci) / 2.0
+    return {
+        "beta": slope(y, x),
+        "lo": float(np.quantile(draws, tail)),
+        "hi": float(np.quantile(draws, 1.0 - tail)),
+        "ci": ci,
+        "n_draws": n_draws,
+        "se_boot": float(draws.std(ddof=1)),
+    }
+
+
+# Tickers the app's math actually depends on: the AI basket (every regression's
+# x-variable) plus the reference portfolios every user beta is displayed next to.
+# Deliberately NOT "every ticker in the panel" -- see data_through() below.
+CORE_TICKERS_FOR_DATA_THROUGH = AI_BASKET + ["SPY", "QQQ", "VT", "RSP", "TLT"]
+
+
+def data_through(prices: pd.DataFrame, core_tickers: list = CORE_TICKERS_FOR_DATA_THROUGH) -> dict:
+    """Date through which the app's math actually has real data, not just
+    whichever ticker in the panel happens to be most current.
+
+    `prices.index.max()` is the UNION of every ticker's dates -- one recently
+    added, frequently-updated ticker can push it forward while the tickers the
+    regression actually uses (the AI basket, plus the reference portfolios a
+    user's beta is compared against) are weeks behind. Pandas' `pct_change()`
+    forward-fills that gap by default, fabricating a 0.00% return for every
+    stale ticker on every day after its real data ends -- see LIMITATIONS.md's
+    forward-fill entry for the incident this caused. Reporting the panel's max
+    date as "data through" would have certified freshness that didn't exist.
+
+    Returns a dict:
+      - "date": the conservative date -- min(last_valid_index()) across
+        `core_tickers` -- safe to print as "this is how current the math is".
+      - "panel_max": the panel's raw max date, for comparison.
+      - "stale": True when panel_max is ahead of "date", meaning some
+        non-core ticker is more current than the app's actual math.
+
+    Raises ValueError if none of `core_tickers` are present in `prices`.
+    """
+    core_dates = [prices[t].last_valid_index() for t in core_tickers if t in prices.columns]
+    core_dates = [d for d in core_dates if d is not None]
+    if not core_dates:
+        raise ValueError("None of the core tickers (AI basket + reference portfolios) are present in the price panel.")
+    core_through = min(core_dates)
+    panel_max = prices.index.max()
+    return {
+        "date": core_through.strftime("%Y-%m-%d"),
+        "panel_max": panel_max.strftime("%Y-%m-%d"),
+        "stale": bool(core_through < panel_max),
+    }

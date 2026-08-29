@@ -36,8 +36,8 @@ Each portfolio (SPY, VT, QQQ, RSP, synthetic 60/40, TLT) is then regressed on
 
 ### Sanity checks (all passed)
 
-- QQQ has the highest `beta_ai` of the six portfolios (0.7461).
-- TLT's `beta_ai` is under 0.1 (0.0487).
+- QQQ has the highest `beta_ai` of the six portfolios (0.7586).
+- TLT's `beta_ai` is under 0.1 (0.0775).
 - Because the rest factor is exactly orthogonal to the AI factor over the fitting
   window, each portfolio's two-factor `beta_ai` should equal its Module 1
   single-factor beta almost exactly. It does -- every portfolio matched to within
@@ -59,7 +59,7 @@ RSP's is not.
 alpha/drift term -- see Limitations).
 
 1. **"No bubble" (trend continuation).** `AI_shock` = the AI basket's own trailing
-   3-year (756 trading day) annualized return (43.6%). `rest_shock` = the rest
+   3-year (756 trading day) annualized return (43.8%). `rest_shock` = the rest
    factor's trailing 3-year annualized return, computed the same
    residualization way as the 252-day factor but over the 3-year window. Because
    OLS residuals have ~zero mean over their own fitting window by construction,
@@ -91,19 +91,19 @@ not re-typed by hand, so they can't drift out of sync with Module 2's own number
 
 | Portfolio | beta_AI | beta_rest | No bubble | 2022-style | 2008-style | Dot-com-style |
 |---|---|---|---|---|---|---|
-| QQQ | 0.75 | 0.41 | +33% | -33% | -64% | -72% |
+| QQQ | 0.76 | 0.40 | +33% | -33% | -64% | -73% |
 | SPY | 0.50 | 0.52 | +22% | -26% | -58% | -57% |
-| VT | 0.50 | 0.65 | +22% | -28% | -66% | -61% |
-| 60/40 | 0.32 | 0.41 | +14% | -18% | -41% | -39% |
-| RSP | 0.25 | 1.00* | +11% | -26% | -73% | -54% |
-| TLT (control) | 0.05 | 0.23 | +2% | -6% | -16% | -12% |
+| VT | 0.51 | 0.62 | +22% | -28% | -64% | -61% |
+| 60/40 | 0.33 | 0.40 | +15% | -18% | -42% | -40% |
+| RSP | 0.24 | 1.00* | +10% | -25% | -73% | -53% |
+| TLT (control) | 0.08 | 0.24 | +3% | -7% | -18% | -14% |
 
 \* tautological, see above.
 
 **Notice the 60/40 (and RSP) row: the 2008-style projection is *worse* than the
 dot-com-style one**, even though the dot-com `AI_shock` (-77.9%) is larger in
 magnitude than the 2008 `AI_shock` (-53.4%). The reason is `beta_rest`: 60/40 has
-meaningful exposure to the rest-of-market factor (0.41), and 2008's `rest_shock`
+meaningful exposure to the rest-of-market factor (0.40), and 2008's `rest_shock`
 (-59.8%) is much deeper than dot-com's (-34.1%) -- so a portfolio with balanced
 factor exposure takes a bigger hit from the "systemic" scenario than from the
 "concentration" one, even though the latter's headline AI-basket shock number looks
@@ -125,7 +125,7 @@ scarier in isolation. See `m3_findings.md` for the full comparative read.
   by a large real-world shock is a simplification, not a rigorous factor-model
   projection -- it's most visible in RSP's row, where the tautological
   `beta_rest = 1.0` combined with a large `rest_shock` produces a projected dot-com
-  loss (-54%) that runs deeper than Module 2's actual measured value-stock drawdown
+  loss (-53%) that runs deeper than Module 2's actual measured value-stock drawdown
   (-34%) it's partly built from.
 - **The shock mapping is an analogy, not an identity.** "Nasdaq Composite in 2000 is
   like the AI basket today" and "Value/IWD in 2000 is like the rest-of-market factor

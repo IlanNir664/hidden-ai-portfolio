@@ -299,6 +299,101 @@ code, none touching `factor_lib`:
   (the dot stays visible) whenever they coincide, so "YOU" is never fighting
   another label for the same pixels.
 
+## App v3: uncertainty, crash-conditional betas, and a data stamp
+
+Three additions, all in `analysis/factor_lib.py` so the research scripts and the
+app keep sharing one implementation, and all covered by new tests in
+`tests/test_factor_lib.py`.
+
+### 1. A bootstrap band on the headline
+
+`bootstrap_beta_ci()` resamples the trailing 252-day window in contiguous
+20-day blocks, 400 times, recomputing the OLS slope (as Cov(x,y)/Var(x), which
+is the same slope without the statsmodels overhead) on each resample, and
+reports the 5th and 95th percentiles. The hero card now reads e.g.
+"51% AI" with a "90% range: 48-54%" substat beside it.
+
+Blocks rather than iid draws because daily returns are autocorrelated and
+volatility clusters in time; resampling single days would destroy that
+dependence and produce a band that is too narrow. This is the same reason the
+project declines to show OLS p-values (see Known limitations below) -- the
+classical standard errors those p-values rest on are biased down by exactly
+this feature of the data. A band on a number the app actually displays was
+judged more useful than a corrected significance test for a number it doesn't.
+
+### 2. Crash-conditional (piecewise) betas
+
+`downside_regress()` and `two_factor_downside_regress()` fit
+
+    y = alpha + beta_up * x + beta_extra * (x * 1{x < 0}) + e
+
+so the down-day slope is `beta_up + beta_extra` -- the Henriksson-Merton /
+Bawa-Lindenberg specification, still linear in the factor.
+`project_scenario_conditional()` then multiplies each factor's shock by the
+state-matched beta: a negative shock hits the down-day slope, a positive one
+the up-day slope, so the loss scenarios use falling-market co-movement and the
+trend-continuation scenario uses rising-market co-movement. It reduces exactly
+to `project_scenario()` when the two slopes are equal.
+
+A quadratic term was considered and rejected. The scenario engine extrapolates
+roughly 25x outside its fitting range (a -77.9% shock against typical daily
+moves of +/-2-3%); a squared term extrapolated that far would dominate the
+projection entirely, its sign would decide the answer, and it has no
+interpretable "% AI" reading for the hero card. Interactions between the AI
+factor and the rest factor were rejected for the same extrapolation reason plus
+a second one: the rest factor is orthogonalized against the AI factor over the
+fit window, so their interaction is close to fitting noise.
+
+**What the measurement actually found.** The effect is real, consistent in
+sign, and much smaller than `LIMITATIONS.md` had long implied: about +2 to +5
+points of extra down-day beta for SPY and QQQ across 252/756/1260-day windows,
+sign-unstable for VT, and essentially absent within 2022 itself -- where both
+betas rose together instead. That is a level shift, not an asymmetry, which
+means the piecewise split is not the mechanism that captures "correlations rise
+in a crash". Reporting that honestly, including the part that undercuts the
+project's own prior caveat, is the point of the exhibit.
+
+It is shown in Step 5 as a robustness expander next to the bars, never
+substituted into them: Module 1 and Module 3's published figures are
+symmetric-beta figures, and silently changing the app's math would put the app
+out of sync with the research it displays alongside the user's own number.
+
+### 3. "Data through" in the sidebar
+
+`data_through()` originally returned `prices.index.max()` -- the panel's raw
+last date, printed in the sidebar diagnostics block under the gate check. That
+was wrong: `prices.index.max()` is a union across every ticker in the DB, so
+one recently added, frequently updated ticker can push it forward while the
+tickers the app's math actually depends on lag behind. That is exactly what
+happened after the 2026-08-26 ticker-universe expansion: the panel's max date
+read 2026-08-26 while the AI basket and every reference portfolio (SPY, QQQ,
+VT, RSP, TLT) were still frozen at 2026-07-10, so the stamp certified freshness
+that didn't exist -- and, worse, `prices.pct_change()`'s default forward-fill
+silently fabricated zero returns for the lagging tickers over that gap (see
+`LIMITATIONS.md`'s forward-fill entry for the full incident).
+
+`data_through()` now returns `{"date", "panel_max", "stale"}`: `"date"` is
+`min(last_valid_index())` across the AI basket plus SPY/QQQ/VT/RSP/TLT --
+the tickers every regression in the app actually touches -- `"panel_max"` is
+the panel's raw max date for comparison, and `"stale"` is True whenever
+`"panel_max"` is running ahead of `"date"`. The sidebar prints `"date"`, and
+switches to a caption that names the gap explicitly when `"stale"` is True,
+rather than silently showing one date that may or may not mean what it looks
+like it means.
+
+Note that this stamp still only covers the DB. The reference bars the app
+plots beside the user's own (SPY/QQQ/VT/RSP/60-40) are read from
+`outputs/m1_beta_table.csv` and `outputs/m3_scenario_table.csv`, which are
+regenerated by re-running `analysis/m1_concentration.py` and
+`analysis/m3_scenarios.py`. If the DB is refreshed (now via
+`data/pull_prices.py --refresh`, which also closes the split-end-date gap
+above) and those scripts are not re-run, the user's live bar and the reference
+bars are computed over different windows. Two existing tests
+(`test_100pct_spy_user_portfolio_matches_m1_beta`,
+`test_60_40_user_portfolio_matches_synthetic_60_40_row`) fail exactly when that
+happens -- treat a red test suite after a data pull as the reminder to re-run
+both modules and update the findings docs, not as a broken test.
+
 ## Known limitations
 
 See `LIMITATIONS.md`, Module 4 section, for the full list: the ~100-ticker

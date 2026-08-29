@@ -21,8 +21,8 @@ believe are diversified, plus an interactive app that measures it for *your* por
    great repricing, and that's true even though "S&P 500" has meant the same thing,
    with the same name, since 1990.
 2. **Every "diversified" portfolio tested carries far more AI exposure than its holdings
-   sheet suggests:** QQQ moves from a 33% direct weight to 75% effective exposure, SPY
-   from 34% to 50%, and VT, a whole-world fund, from 21% to **50%**.
+   sheet suggests:** QQQ moves from a 33% direct weight to 76% effective exposure, SPY
+   from 34% to 50%, and VT, a whole-world fund, from 21% to **51%**.
 3. **Even the "least AI" fund isn't out of the trade:** equal-weight RSP holds under 2%
    of the AI basket directly, yet a quarter of its daily movement still tracks it. The
    only diversification that measurably reduced exposure was *across asset classes*
@@ -32,8 +32,8 @@ believe are diversified, plus an interactive app that measures it for *your* por
    2022 repeated the shape at a smaller scale. 2008 did the opposite: value fell
    *harder*, while Treasuries rose.
 5. **Applying those historical shocks to today's measured betas** gives a menu, not a
-   recommendation: a dot-com-style repricing would imply −72% for QQQ and −39% for a
-   60/40, while trend continuation implies +33% and +14% respectively. No portfolio
+   recommendation: a dot-com-style repricing would imply −73% for QQQ and −40% for a
+   60/40, while trend continuation implies +33% and +15% respectively. No portfolio
    wins on both axes, and this project deliberately declines to recommend a point on
    that line.
 
@@ -105,16 +105,16 @@ beta *exceeds* the direct weight, the rest of the portfolio isn't neutral: it's 
 names riding the same trade.
 
 *Pre-registered sanity checks (set before running):* QQQ must show the highest beta;
-TLT (long Treasuries) must be roughly 0. Both held: 0.75 and 0.05.
+TLT (long Treasuries) must be roughly 0. Both held: 0.76 and 0.08.
 
 | Portfolio | Direct weight | Effective exposure (β) | R² |
 |---|---|---|---|
-| QQQ | 33.3%* | **0.75** | 0.76 |
-| SPY | 33.8% | **0.50** | 0.75 |
-| VT | 20.9% | **0.50** | 0.63 |
-| 60/40 (synthetic) | 20.3% | **0.32** | 0.60 |
-| RSP | 1.6% | **0.25** | 0.21 |
-| TLT *(control)* | ~0% | 0.05 | 0.01 |
+| QQQ | 33.3%* | **0.76** | 0.74 |
+| SPY | 33.8% | **0.50** | 0.77 |
+| VT | 20.9% | **0.51** | 0.66 |
+| 60/40 (synthetic) | 20.3% | **0.33** | 0.63 |
+| RSP | 1.6% | **0.24** | 0.21 |
+| TLT *(control)* | ~0% | 0.08 | 0.03 |
 
 \* a lower bound, see Limitations.
 
@@ -151,18 +151,18 @@ trend continuation ("no bubble"), 2022-style, 2008-style, and dot-com-style repr
 
 | Portfolio | β AI | β rest | No bubble | 2022-style | Dot-com-style |
 |---|---|---|---|---|---|
-| QQQ | 0.75 | 0.41 | +33% | −33% | **−72%** |
+| QQQ | 0.76 | 0.40 | +33% | −33% | **−73%** |
 | SPY | 0.50 | 0.52 | +22% | −26% | −57% |
-| VT | 0.50 | 0.65 | +22% | −28% | −61% |
-| 60/40 | 0.32 | 0.41 | +14% | −18% | −39% |
-| RSP | 0.25 | 1.00† | +11% | −26% | −54% |
-| TLT *(control)* | 0.05 | 0.23 | +2% | −6% | −12% |
+| VT | 0.51 | 0.62 | +22% | −28% | −61% |
+| 60/40 | 0.33 | 0.40 | +15% | −18% | −40% |
+| RSP | 0.24 | 1.00† | +10% | −25% | −53% |
+| TLT *(control)* | 0.08 | 0.24 | +3% | −7% | −14% |
 
 † tautological: RSP builds the rest factor. Read that row as a mechanical reference
 point, not an independent result.
 
 A finding that only surfaced after running the numbers: **the 60/40's 2008-style
-projection (−41%) is *worse* than its dot-com-style one (−39%)**, because 2008's
+projection (−42%) is *worse* than its dot-com-style one (−40%)**, because 2008's
 non-epicenter shock (−59.8%) ran far deeper than 2000's (−34.1%). Being "less AI" is
 not protection against every kind of crash.
 

@@ -26,4 +26,9 @@ page-*.jpg
 # Claude Code local tool settings (contains local machine paths, not project config)
 .claude/
 
+# Third-party AI-tooling skill files -- local dev-environment config, not project code
+.agents/
+data/skills/
+skills-lock.json
+
 *.docx

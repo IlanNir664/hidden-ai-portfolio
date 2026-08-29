@@ -5,6 +5,7 @@ Run: pytest tests/ -v
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -20,7 +21,7 @@ def prices() -> pd.DataFrame:
 
 @pytest.fixture(scope="module")
 def simple_returns(prices) -> pd.DataFrame:
-    return prices.pct_change()
+    return prices.pct_change(fill_method=None)
 
 
 @pytest.fixture(scope="module")
@@ -270,3 +271,227 @@ def test_merge_selected_weights_falls_back_to_equal_split_when_nothing_to_preser
     pick from empty) gets an equal split instead of an unhelpful wall of zeros."""
     merged = fl.merge_selected_weights(["A", "B", "C"], {})
     assert merged == fl.equal_split_weights(["A", "B", "C"])
+
+
+# --- validate_weights: defensive checks on individual weight VALUES, not just
+# whether the map is empty or sums to 100 -- these can only be reached via the
+# shareable-link path, since the app's own number_input widgets already enforce
+# [0, 100] and can't produce NaN/inf. ---
+
+def test_validate_weights_rejects_nan():
+    weights, errors, _ = fl.validate_weights({"AAPL": float("nan"), "SPY": 50.0})
+    assert weights is None
+    assert any("AAPL" in e for e in errors)
+
+
+def test_validate_weights_rejects_negative():
+    weights, errors, _ = fl.validate_weights({"AAPL": -10.0, "SPY": 110.0})
+    assert weights is None
+    assert any("AAPL" in e for e in errors)
+
+
+def test_validate_weights_accepts_a_clean_portfolio():
+    weights, errors, _ = fl.validate_weights({"AAPL": 60.0, "SPY": 40.0})
+    assert errors == []
+    assert weights == {"AAPL": 0.6, "SPY": 0.4}
+
+
+# --- decode_portfolio_query: the shareable-link parser. Any single malformed
+# pair invalidates the WHOLE link (returns None) rather than silently dropping
+# just that pair or building a partial portfolio -- see the function's own
+# docstring for the incident (NaN sailing through both bounds checks) this
+# guards against. Ticker-universe membership is deliberately out of scope here
+# (the app's caller filters against `universe` afterward). ---
+
+def test_decode_portfolio_query_valid_link_round_trips():
+    raw = fl.encode_portfolio_query({"SPY": 60.0, "TLT": 40.0})
+    assert fl.decode_portfolio_query(raw) == {"SPY": 60.0, "TLT": 40.0}
+
+
+def test_decode_portfolio_query_rejects_negative_weight():
+    assert fl.decode_portfolio_query("AAPL:-50") is None
+
+
+def test_decode_portfolio_query_rejects_weight_over_100():
+    assert fl.decode_portfolio_query("AAPL:150") is None
+
+
+def test_decode_portfolio_query_rejects_nan():
+    assert fl.decode_portfolio_query("AAPL:nan") is None
+
+
+def test_decode_portfolio_query_rejects_inf():
+    assert fl.decode_portfolio_query("AAPL:inf") is None
+    assert fl.decode_portfolio_query("AAPL:-inf") is None
+
+
+def test_decode_portfolio_query_drops_unknown_ticker_but_keeps_the_rest():
+    """Ticker validity isn't this function's job -- it should pass an unknown
+    ticker through like any other, leaving the universe filter to the caller."""
+    assert fl.decode_portfolio_query("ZZZZ:100") == {"ZZZZ": 100.0}
+
+
+def test_decode_portfolio_query_rejects_empty_string():
+    assert fl.decode_portfolio_query("") is None
+
+
+def test_decode_portfolio_query_rejects_garbage():
+    assert fl.decode_portfolio_query(";;;") is None
+
+
+# ============================================================================
+# Crash-conditional (piecewise) betas, the bootstrap band, and the data stamp.
+# These use SYNTHETIC series wherever a known answer is needed -- a test that
+# asserts a specific beta on live market data would start failing the next
+# time the price DB is refreshed, which is a broken test, not a caught
+# regression. The live-data tests below only assert relationships that must
+# hold by construction.
+# ============================================================================
+
+
+def _synthetic_factor(n: int = 500, seed: int = 7) -> pd.Series:
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    return pd.Series(rng.normal(0, 0.012, n), index=idx, name="x")
+
+
+def test_downside_regress_recovers_a_symmetric_beta():
+    """A series built with one constant slope must show up-beta == down-beta."""
+    x = _synthetic_factor()
+    y = 0.6 * x
+    result = fl.downside_regress(y, x, window=len(x))
+    assert result["beta_up"] == pytest.approx(0.6, abs=1e-6)
+    assert result["beta_down"] == pytest.approx(0.6, abs=1e-6)
+    assert result["asymmetry"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_downside_regress_recovers_a_known_asymmetry():
+    """A series built with a steeper down-day slope must recover both slopes."""
+    x = _synthetic_factor()
+    y = np.where(x < 0, 0.9 * x, 0.4 * x)
+    y = pd.Series(y, index=x.index)
+    result = fl.downside_regress(y, x, window=len(x))
+    assert result["beta_up"] == pytest.approx(0.4, abs=1e-6)
+    assert result["beta_down"] == pytest.approx(0.9, abs=1e-6)
+    assert result["asymmetry"] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_downside_regress_raises_when_a_state_is_too_thin():
+    """Too few down-days must raise a clear ValueError, not return a wild slope."""
+    x = _synthetic_factor(n=200)
+    x = x.abs()                      # no down days at all
+    x.iloc[:5] = -0.01               # five, still under MIN_STATE_OBS
+    with pytest.raises(ValueError):
+        fl.downside_regress(0.5 * x, x, window=len(x))
+
+
+def test_two_factor_downside_recovers_known_state_betas():
+    x_ai = _synthetic_factor(seed=11)
+    x_rest = _synthetic_factor(seed=12).rename("rest")
+    y = pd.Series(
+        np.where(x_ai < 0, 0.8, 0.3) * x_ai + np.where(x_rest < 0, 0.5, 0.2) * x_rest,
+        index=x_ai.index,
+    )
+    result = fl.two_factor_downside_regress(y, x_ai, x_rest, window=len(x_ai))
+    assert result["beta_ai_up"] == pytest.approx(0.3, abs=1e-6)
+    assert result["beta_ai_down"] == pytest.approx(0.8, abs=1e-6)
+    assert result["beta_rest_up"] == pytest.approx(0.2, abs=1e-6)
+    assert result["beta_rest_down"] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_conditional_projection_reduces_to_symmetric_when_betas_match():
+    """With equal up/down betas the conditional formula IS project_scenario."""
+    betas = {"beta_ai_up": 0.5, "beta_ai_down": 0.5, "beta_rest_up": 0.4, "beta_rest_down": 0.4}
+    assert fl.project_scenario_conditional(betas, -0.5, -0.3) == pytest.approx(
+        fl.project_scenario(0.5, 0.4, -0.5, -0.3)
+    )
+
+
+def test_conditional_projection_picks_the_state_matched_beta():
+    """Negative shocks must use down-betas, positive shocks up-betas."""
+    betas = {"beta_ai_up": 0.3, "beta_ai_down": 0.9, "beta_rest_up": 0.2, "beta_rest_down": 0.6}
+    assert fl.project_scenario_conditional(betas, -1.0, -1.0) == pytest.approx(-1.5)   # 0.9 + 0.6
+    assert fl.project_scenario_conditional(betas, 1.0, 1.0) == pytest.approx(0.5)      # 0.3 + 0.2
+    # mixed: a falling AI basket alongside a rising rest-of-market factor
+    assert fl.project_scenario_conditional(betas, -1.0, 1.0) == pytest.approx(-0.7)    # -0.9 + 0.2
+
+
+def test_bootstrap_band_brackets_the_point_estimate():
+    x = _synthetic_factor()
+    rng = np.random.default_rng(3)
+    y = 0.6 * x + pd.Series(rng.normal(0, 0.004, len(x)), index=x.index)
+    result = fl.bootstrap_beta_ci(y, x, window=len(x), n_draws=200)
+    assert result["lo"] < result["beta"] < result["hi"]
+    assert result["beta"] == pytest.approx(
+        fl.single_factor_regress(y, x, window=len(x))["beta"], abs=1e-9
+    )
+    assert result["lo"] < 0.6 < result["hi"]
+
+
+def test_bootstrap_is_reproducible_for_a_given_seed():
+    x = _synthetic_factor()
+    y = 0.6 * x
+    first = fl.bootstrap_beta_ci(y, x, window=len(x), n_draws=100, seed=42)
+    second = fl.bootstrap_beta_ci(y, x, window=len(x), n_draws=100, seed=42)
+    assert first == second
+
+
+def test_bootstrap_raises_on_a_window_too_short_to_block():
+    x = _synthetic_factor(n=10)
+    with pytest.raises(ValueError):
+        fl.bootstrap_beta_ci(0.5 * x, x, window=10)
+
+
+def test_data_through_reports_the_conservative_core_ticker_date():
+    """data_through must report the date through which the tickers the app's math
+    actually depends on (the AI basket + reference portfolios) ALL have real data --
+    not the panel's raw max, which is just whichever ticker happens to be most
+    current and can be a completely unrelated one. This is the exact shape of bug
+    that let forward-filled pct_change() silently fabricate zero returns for stale
+    tickers (see LIMITATIONS.md): a synthetic panel here with a recently-added
+    ticker two days ahead of the core tickers must NOT be reported as "current".
+    """
+    dates = pd.date_range("2026-01-01", periods=5, freq="B")
+    panel = pd.DataFrame(
+        {
+            "SPY": [100.0, 101.0, 102.0, np.nan, np.nan],   # core, stale 2 days
+            "NVDA": [50.0, 51.0, 52.0, 53.0, np.nan],       # core, stale 1 day
+            "RECENTLY_ADDED": [10.0, 11.0, 12.0, 13.0, 14.0],  # non-core, most current ticker in the panel
+        },
+        index=dates,
+    )
+    result = fl.data_through(panel, core_tickers=["SPY", "NVDA"])
+    assert result["date"] == dates[2].strftime("%Y-%m-%d")  # min(last_valid_index) across SPY/NVDA
+    assert result["panel_max"] == dates[4].strftime("%Y-%m-%d")
+    assert result["stale"] is True
+
+
+def test_data_through_not_stale_when_core_tickers_are_current():
+    """When the core tickers ARE the panel's most current data, stale must be False
+    and "date" must equal "panel_max" -- the non-degraded case."""
+    dates = pd.date_range("2026-01-01", periods=3, freq="B")
+    panel = pd.DataFrame({"SPY": [100.0, 101.0, 102.0], "NVDA": [50.0, 51.0, 52.0]}, index=dates)
+    result = fl.data_through(panel, core_tickers=["SPY", "NVDA"])
+    assert result["date"] == result["panel_max"] == dates[-1].strftime("%Y-%m-%d")
+    assert result["stale"] is False
+
+
+def test_data_through_raises_when_no_core_tickers_present():
+    dates = pd.date_range("2026-01-01", periods=2, freq="B")
+    panel = pd.DataFrame({"UNRELATED": [1.0, 2.0]}, index=dates)
+    with pytest.raises(ValueError):
+        fl.data_through(panel, core_tickers=["SPY", "NVDA"])
+
+
+def test_live_downside_split_is_consistent_with_the_symmetric_beta(simple_returns, ai_log):
+    """On real data the symmetric beta must sit between the up- and down-day betas.
+
+    A relationship that holds by construction (the pooled slope is a weighted
+    blend of the two state slopes), so this catches a wiring error without
+    pinning any number that a data refresh would move.
+    """
+    y_log = fl.to_log_returns(simple_returns["SPY"])
+    symmetric = fl.single_factor_regress(y_log, ai_log)["beta"]
+    split = fl.downside_regress(y_log, ai_log)
+    lo, hi = sorted((split["beta_up"], split["beta_down"]))
+    assert lo - 0.05 <= symmetric <= hi + 0.05

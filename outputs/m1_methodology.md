@@ -20,7 +20,7 @@ pipeline can't reproduce a known fact, nothing downstream is trusted.
 ## Part A -- Effective exposure (the regression)
 
 For each portfolio, daily log returns were regressed (OLS) on the AI basket's daily log
-returns over the trailing 252 trading days (~1 calendar year, 2025-07-10 to 2026-07-10).
+returns over the trailing 252 trading days (~1 calendar year, 2025-08-26 to 2026-08-26).
 The basket itself is the equal-weighted mean of the 8 tickers' simple daily returns,
 converted to log returns, restricted to days where all 8 have data.
 
@@ -30,7 +30,7 @@ of what the portfolio's fact sheet says it holds. R^2 indicates how much of the
 portfolio's variance the basket explains on its own.
 
 Two built-in sanity checks: QQQ should show the highest beta among the portfolios (it
-did, 0.75), and TLT should be near zero (it was, 0.05).
+did, 0.76), and TLT should be near zero (it was, 0.08).
 
 ## Part B -- Direct (naive) weight
 

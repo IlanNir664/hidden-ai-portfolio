@@ -224,6 +224,80 @@ alongside the analysis, not after -- per the project's rigor rule (see
   back to target periodically (if ever), and any actual rebalancing incurs
   trading costs and, for taxable accounts, tax events -- none of that is
   modeled here.
+- **The headline beta now carries a bootstrap band; the scenario numbers still
+  don't.** The app shows a 90% moving-block bootstrap interval next to the
+  headline exposure (400 resamples, 20-day blocks -- blocks rather than single
+  days because daily returns are autocorrelated and volatility clusters, which
+  biases ordinary OLS standard errors down). That band covers estimation error
+  in beta ONLY. The projected scenario outcomes downstream are still displayed
+  as point numbers, and their real uncertainty is dominated by the shock
+  mapping and the linearity assumption, neither of which any resampling
+  procedure can quantify. A band on the beta is not a band on the projection.
+- **Crash-conditional betas are measured now, not just confessed -- and the
+  effect is smaller than this document long implied.** Step 5 carries a
+  robustness expander that re-estimates each portfolio's exposure separately
+  on days the AI basket rose and days it fell (a Henriksson-Merton /
+  Bawa-Lindenberg piecewise-linear specification, see
+  `factor_lib.two_factor_downside_regress`) and re-runs the projection with
+  those state-matched betas. Across the reference portfolios the measured
+  asymmetry over the current window is small and positive -- roughly +2 to +5
+  points of extra down-day beta for SPY and QQQ, and it does not survive at
+  all in some portfolios (VT's flips sign depending on window length). Over
+  2022's own stressed year it nearly vanishes, because what actually happened
+  was that both the up-day and down-day betas rose together -- a level shift,
+  not an asymmetry. The "correlations rise in drawdowns" caveat above is
+  therefore still directionally right about crash-period exposure being higher
+  than a calm-window beta suggests, but the piecewise split is NOT the
+  mechanism that captures it, and the day-level asymmetry it does capture is
+  an order of magnitude smaller than the confession implied. A quadratic
+  (x-squared) term was considered and rejected: the projection extrapolates
+  roughly 25x outside the daily fitting range, where a squared term would
+  dominate the answer entirely while having no interpretable "% AI" reading.
+- **The robustness numbers are an exhibit, not the app's math.** Step 5's bars,
+  Step 6's tradeoff chart, and every published Module 3 figure still use the
+  single symmetric beta. The conditional projection is shown beside them for
+  comparison and never substituted, so the app and the research it's built on
+  cannot drift apart -- but it does mean the headline path knowingly uses the
+  weaker of two available specifications, in exchange for consistency.
+- **The "Data through" stamp reports the conservative core-ticker date, not the
+  panel's raw max.** `data_through()` originally returned `prices.index.max()` --
+  whichever ticker in the DB happened to be most current, which is not
+  necessarily any ticker the app's math actually uses. That claim was wrong in
+  exactly the way the forward-fill entry below describes: the panel could (and
+  did) show a recent date while the AI basket and reference portfolios were
+  weeks behind, certifying freshness that didn't exist. It now reports
+  `min(last_valid_index())` across the AI basket plus SPY/QQQ/VT/RSP/TLT -- the
+  tickers every regression in the app actually touches -- and the sidebar
+  caption changes wording when the panel's raw max date is running ahead of
+  that. `data/prices.db` is still refreshed by hand via `data/pull_prices.py`
+  (now with a `--refresh` flag that brings already-cached tickers current
+  instead of only fetching new ones); the stamp does not refresh itself, and it
+  still cannot tell you whether the published Module 1/3 tables it plots
+  alongside your own number were regenerated after the last refresh (see the
+  two reference-table tests in `tests/test_factor_lib.py`, which are what catch
+  that drift).
+- **Forward-filled returns silently corrupted every regression for about a
+  day (2026-08-26 to 2026-08-27).** The 2026-08-26 commit that expanded the
+  ticker universe left the DB with split end dates: ~40 newly added tickers
+  reached 2026-08-25/26 while the AI basket and every reference portfolio
+  (SPY, QQQ, VT, RSP, TLT) were still frozen at 2026-07-10. `prices.pct_change()`
+  was called without `fill_method=None` at all four places that compute returns
+  (`app/xray_app.py`, `analysis/m1_concentration.py`, `analysis/m3_scenarios.py`,
+  and the `tests/test_factor_lib.py` fixture), so pandas' deprecated default
+  (`fill_method="pad"`) forward-filled each stale ticker's gap before
+  differencing -- fabricating a 0.00% return for every one of those ~40 tickers
+  on each of the ~32 trading days after its real data ended. For any portfolio
+  holding one of them, that's roughly 13% of the trailing 252-day estimation
+  window built from synthetic zeros, and it silently moved every beta: SPY's
+  computed 0.5038 as 0.5107 padded, TLT moved 0.0487 -> 0.0750, a 54% change on
+  pure artifact. The guard now in place: `fill_method=None` is explicit at all
+  four call sites, `data/pull_prices.py --refresh` brings every cached ticker
+  back to the same end date so the split can't silently reopen, and
+  `tests/test_factor_lib.py::test_100pct_spy_user_portfolio_matches_m1_beta` /
+  `test_60_40_user_portfolio_matches_synthetic_60_40_row` compare a live-computed
+  beta against the published table to 1e-4 -- either this bug recurring or the
+  DB drifting out of sync with the published tables moves that comparison
+  outside tolerance and fails the suite.
 - **Every Module 1 and Module 3 limitation applies verbatim to any user
   portfolio run through this app**, since the app is built on exactly the same
   `factor_lib` machinery those modules use: hindsight-selected basket, linear

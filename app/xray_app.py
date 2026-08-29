@@ -214,7 +214,7 @@ def load_prices_cached() -> pd.DataFrame:
 
 @st.cache_data
 def get_simple_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return prices.pct_change()
+    return prices.pct_change(fill_method=None)
 
 
 @st.cache_data
@@ -292,57 +292,12 @@ def get_concentration_history_df() -> pd.DataFrame:
 
 
 # ============================================================================
-# Portfolio validation
+# Portfolio validation + shareable-link encoding -- implementations live in
+# factor_lib.py (validate_weights, encode_portfolio_query, decode_portfolio_query),
+# same reasoning as merge_selected_weights/equal_split_weights above: pure logic
+# the app depends on lives where tests/test_factor_lib.py can reach it without
+# importing a live Streamlit script.
 # ============================================================================
-
-def validate_weights(weight_map: dict):
-    """Returns (weights_dict, errors, warnings). weights_dict is None if invalid.
-
-    Duplicate/unsupported tickers can't reach this function: the multiselect only
-    offers tickers already in the DB universe, and the manual-entry fallback
-    validates membership before adding to the selection. The only thing left to
-    check here is whether weights sum to 100%.
-    """
-    errors, warnings = [], []
-    if not weight_map:
-        errors.append("Select at least one ticker above.")
-        return None, errors, warnings
-
-    total = sum(weight_map.values())
-    if abs(total - 100.0) > 0.01:
-        errors.append(f"Your weights add up to {total:.2f}%, not 100%.")
-        return None, errors, warnings
-
-    return {t: w / 100.0 for t, w in weight_map.items()}, errors, warnings
-
-
-# ============================================================================
-# Shareable-link encoding (polish pass, item 4) -- serializes {ticker: weight_pct}
-# into a single URL query param value so a portfolio can be attached to an email/
-# LinkedIn message and land the recipient back in this exact state, not just a
-# blank app. Deliberately simple (TICKER:WEIGHT pairs, comma-joined) rather than
-# base64/JSON -- stays human-readable in the address bar, and Streamlit's own
-# st.query_params already handles URL-escaping the joined string on write/read.
-# ============================================================================
-
-def encode_portfolio_query(weights_pct_map: dict) -> str:
-    return ",".join(f"{ticker}:{weight:.2f}" for ticker, weight in weights_pct_map.items())
-
-
-def decode_portfolio_query(raw: str) -> dict:
-    """Best-effort parse -- a hand-edited or truncated URL degrades to dropping
-    the unparseable pair(s) rather than failing the whole link."""
-    decoded = {}
-    for pair in raw.split(","):
-        ticker, _, weight_str = pair.partition(":")
-        ticker = ticker.strip().upper()
-        if not ticker or not weight_str:
-            continue
-        try:
-            decoded[ticker] = float(weight_str)
-        except ValueError:
-            continue
-    return decoded
 
 
 # ============================================================================
@@ -1406,6 +1361,27 @@ st.markdown(
     'This app isn\'t claiming a bubble exists or that a crash is coming.</div>',
     unsafe_allow_html=True,
 )
+# Data freshness line (pre-launch pass) -- a visitor has no other way to tell
+# whether the numbers on this page are from this week or six months ago.
+# Reuses .hero-byline (small, centered, muted, no border) rather than a new
+# style block: this is a quiet credibility signal, not a second disclaimer, so
+# it shouldn't carry the disclaimer's lime accent border. Derived from the
+# price data itself (not hardcoded) so it can never drift from what the app
+# actually computed on. Wrapped defensively -- a missing/unreadable DB should
+# just mean no caption here, not a crash; the gate check below is what
+# actually enforces data integrity.
+try:
+    _fresh_prices = load_prices_cached()
+    _fresh_through = _fresh_prices.index.max()
+    st.markdown(
+        f'<div class="hero-byline">Price data through '
+        f'{_fresh_through.day} {_fresh_through.strftime("%b %Y")}'
+        f'<span class="byline-sep">&middot;</span>'
+        f'{_fresh_prices.shape[1]}-ticker universe</div>',
+        unsafe_allow_html=True,
+    )
+except Exception:
+    pass
 
 # --- Gate check: must pass before anything renders ---
 prices = load_prices_cached()
@@ -1665,14 +1641,19 @@ if "_shared_link_checked" not in st.session_state:
     st.session_state["_shared_link_checked"] = True
     shared_raw = st.query_params.get("p")
     if shared_raw:
-        shared_weights = {
-            t: w for t, w in decode_portfolio_query(shared_raw).items() if t in universe
-        }
-        if shared_weights:
-            st.session_state["selected_tickers"] = list(shared_weights.keys())
-            st.session_state["weight_map"] = dict(shared_weights)
-            st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
-            unlock_step(1)
+        decoded = fl.decode_portfolio_query(shared_raw)
+        if decoded is None:
+            st.warning("That shared portfolio link looks invalid or corrupted -- showing the default portfolio instead.")
+        else:
+            shared_weights = {t: w for t, w in decoded.items() if t in universe}
+            if shared_weights:
+                st.session_state["selected_tickers"] = list(shared_weights.keys())
+                st.session_state["weight_map"] = dict(shared_weights)
+                st.session_state["weight_map_version"] = st.session_state.get("weight_map_version", 0) + 1
+                unlock_step(1)
+            else:
+                st.warning("That shared portfolio link didn't contain any tickers this app recognizes -- "
+                           "showing the default portfolio instead.")
 
 # Consumed once, right after the "Copy shareable link" button's own st.rerun()
 # (see the donut section below) -- st.query_params was already set to the new
@@ -1736,6 +1717,19 @@ with st.expander("Why this exists", expanded=False, key="step0_why_expander"):
 
     st.markdown("**This app measures the same drift for any portfolio you build below.**")
 
+with st.expander("Where this could be wrong", expanded=False, key="step0_limitations_expander"):
+    st.markdown(
+        "This project keeps an honest, specific account of its own weak points, not just its "
+        "findings: the AI basket is a single hindsight-selected set of names, never tested against "
+        "how it would have looked in 2015; a linear beta likely *understates* how correlated a "
+        "portfolio would actually be with the AI basket in a real crash; and every scenario number "
+        "on this page is conditional (\"if a 2000-style repricing occurred...\"), never a forecast "
+        "that one will."
+    )
+    st.caption(
+        "[Full limitations list on GitHub](https://github.com/IlanNir664/hidden-ai-portfolio/blob/main/LIMITATIONS.md)"
+    )
+
 # ============================================================================
 # Sidebar -- diagnostics, quick presets, ticker universe browser
 # ============================================================================
@@ -1748,13 +1742,30 @@ with st.sidebar:
     # frameless on purpose, so the bracket treatment reads as "this is a live
     # status readout", not just decoration repeated on every sidebar block.
     with st.container(border=True):
+        data_through = fl.data_through(prices)
+        if data_through["stale"]:
+            data_through_line = (
+                f'<div class="diag-line">Data through: {data_through["date"]}</div>'
+                f'<div class="diag-subcaption">Every trailing-window number in this app ends on this '
+                f'date. Some other ticker in the DB is more current (through '
+                f'{data_through["panel_max"]}), but the AI basket and reference portfolios this app '
+                f'is actually built on are not -- the price database is refreshed manually and is '
+                f'currently out of sync.</div>'
+            )
+        else:
+            data_through_line = (
+                f'<div class="diag-line">Data through: {data_through["date"]}</div>'
+                f'<div class="diag-subcaption">Every trailing-window number in this app ends on this '
+                f'date. The price database is refreshed manually, so it is only as current as this.</div>'
+            )
         st.markdown(
             f'<div class="diag-line">Gate check: <span class="diag-ok">PASS</span></div>'
             f'<div class="diag-subcaption">Confirms the {len(universe)}-ticker price data is complete '
             f'and internally consistent.</div>'
             f'<div class="diag-line">SPY 2022 drawdown: {gate_drawdown * 100:.2f}%</div>'
             f'<div class="diag-line">Universe: {len(universe)} tickers</div>'
-            f'<div class="diag-line">Source: data/prices.db</div>',
+            f'<div class="diag-line">Source: data/prices.db</div>'
+            f'{data_through_line}',
             unsafe_allow_html=True,
         )
     st.markdown("---")
@@ -2087,7 +2098,7 @@ if 2 not in st.session_state["unlocked_steps"]:
                          key="your_mix_chart")
         st.caption(" · ".join(f"{t} {w:.0f}%" for t, w in weights_pct_map.items()))
 
-weights, errors, warnings_ = validate_weights(weights_pct_map)
+weights, errors, warnings_ = fl.validate_weights(weights_pct_map)
 
 for w in warnings_:
     st.info(w)
@@ -2182,6 +2193,37 @@ with st.spinner("X-raying your portfolio…"):
     # it's a cheap vectorized computation either way.
     user_rolling_full = fl.rolling_beta(user_log, ai_log, fl.WINDOW)
 
+    # Uncertainty band on the headline beta (moving-block bootstrap, see
+    # factor_lib.bootstrap_beta_ci for why blocks rather than OLS standard
+    # errors). Failure here must never take the headline number down with it --
+    # a portfolio too short to bootstrap still has a valid point estimate, so
+    # this degrades to "no band shown" rather than st.stop().
+    try:
+        beta_ci = fl.bootstrap_beta_ci(user_log, ai_log)
+    except ValueError:
+        beta_ci = None
+
+    # Crash-conditional (piecewise up/down) betas. Shown as a validation
+    # exhibit next to Step 5's chart, NOT swapped into the headline or the
+    # published projection: Modules 1 and 3's figures are symmetric-beta
+    # figures, and quietly changing the app's math would put the app and the
+    # research it's built on out of sync -- exactly what factor_lib exists to
+    # prevent. Same MIN_STATE_OBS guard as everywhere else; None means "this
+    # portfolio's window doesn't support the split", and the exhibit is
+    # skipped rather than shown unstable.
+    try:
+        downside = fl.downside_regress(user_log, ai_log)
+        tf_conditional = fl.two_factor_downside_regress(user_log, ai_log, rest_factor_252)
+        proj_dotcom_cond = fl.project_scenario_conditional(
+            tf_conditional, m2_shocks["dotcom_ai_shock"], m2_shocks["dotcom_rest_shock"]) * 100
+        proj_2022_cond = fl.project_scenario_conditional(
+            tf_conditional, m2_shocks["2022_ai_shock"], m2_shocks["2022_rest_shock"]) * 100
+        proj_2008_cond = fl.project_scenario_conditional(
+            tf_conditional, m2_shocks["gfc_ai_shock"], m2_shocks["gfc_rest_shock"]) * 100
+    except ValueError:
+        downside = tf_conditional = None
+        proj_dotcom_cond = proj_2022_cond = proj_2008_cond = None
+
 # ============================================================================
 # Your allocation (donut) + Panel 1: Headline (hero card) -- both gated behind
 # one explicit "Calculate my AI %" button + the shared run_gate_animation()
@@ -2225,7 +2267,7 @@ else:
         # via the same unsafe_allow_javascript pattern the "_flash_copy_link"
         # consumption block near the top of this file already uses.
         if st.button("Copy shareable link", key="copy_share_link"):
-            st.query_params["p"] = encode_portfolio_query(weights_pct_map)
+            st.query_params["p"] = fl.encode_portfolio_query(weights_pct_map)
             st.session_state["_flash_copy_link"] = True
             st.rerun()
 
@@ -2237,6 +2279,15 @@ else:
         # can be checked against Module 1's published figures (e.g. 60/40 -> 20.26%) at a
         # glance, without the rounding making an exact match look approximate.
         direct_value_html = f"{user_direct_pct:.1f}%" if user_direct_pct is not None else "N/A"
+        # 90% block-bootstrap band on the headline beta -- a point estimate with
+        # no error band was the app's most conspicuous missing validation
+        # signal. Rendered as a substat rather than inside the hero number so
+        # the big number stays readable at a glance.
+        ci_value_html = (
+            # "to" rather than a hyphen: a near-zero portfolio's band can start
+            # negative (TLT's runs from about -2%), and "-2-13%" is unreadable.
+            f"{beta_ci['lo'] * 100:.0f} to {beta_ci['hi'] * 100:.0f}%" if beta_ci is not None else "N/A"
+        )
         risk_label, risk_css_class, _risk_color, risk_caption = ai_risk_band(beta_pct)
         st.markdown(
             f'''
@@ -2247,6 +2298,7 @@ else:
             <div class="risk-caption">{risk_caption}</div>
             <div class="hero-substats">
               <div class="hero-substat"><div class="sub-label">Naive weight</div><div class="sub-value">{direct_value_html}</div></div>
+              <div class="hero-substat"><div class="sub-label">90% range</div><div class="sub-value">{ci_value_html}</div></div>
               <div class="hero-substat"><div class="sub-label">R²</div><div class="sub-value">{r_squared:.2f}</div></div>
               <div class="hero-substat"><div class="sub-label">Trading days used</div><div class="sub-value">{n_obs}</div></div>
             </div>
@@ -2328,6 +2380,16 @@ else:
         # the number itself), so it's collapsed by default behind the same
         # "meth_" bracket toggle as the rest of this pass's collapsed sections.
         with st.expander("See methodology", key="meth_step2_rsquared"):
+            if beta_ci is not None:
+                st.caption(
+                    f"**The 90% range ({beta_ci['lo'] * 100:.0f}% to {beta_ci['hi'] * 100:.0f}%)** is a "
+                    f"moving-block bootstrap band around the {beta_pct:.0f}% headline: the trailing "
+                    f"window is resampled in {fl.BOOTSTRAP_BLOCK}-day blocks {beta_ci['n_draws']} "
+                    "times, and the beta is recomputed on each resample. Blocks rather than single "
+                    "days because daily returns are autocorrelated and volatility clusters, which "
+                    "biases ordinary OLS standard errors downward. The headline is an estimate with "
+                    "error, not a measurement."
+                )
             st.caption(
                 f"An R² of {r_squared:.2f} means the AI basket explains **{r_squared * 100:.0f}%** of your "
                 f"portfolio's daily movement. The other **{(1 - r_squared) * 100:.0f}%** comes from your own "
@@ -2552,6 +2614,48 @@ if 4 in st.session_state["unlocked_steps"]:
 
             fig3 = render_scenario_chart(proj_no_bubble, proj_2022, proj_2008, proj_dotcom, spy_crash_refs)
             st.plotly_chart(fig3, theme=None, width="stretch", config=PLOTLY_CONFIG)
+
+            # ----------------------------------------------------------------
+            # Crash-conditional beta check. The bars above use one symmetric
+            # beta for every scenario, which assumes a portfolio tracks the AI
+            # basket exactly as closely when it falls as when it rises --
+            # LIMITATIONS.md has always flagged that as a reason the loss
+            # numbers might be too small. This re-runs the same projection with
+            # betas estimated separately on up-days and down-days (see
+            # factor_lib.two_factor_downside_regress) and reports the gap
+            # instead of only confessing it. Deliberately an exhibit, not a
+            # replacement: the bars stay consistent with Module 3's published
+            # figures.
+            # ----------------------------------------------------------------
+            if downside is not None:
+                with st.expander("Robustness check: what if beta is different in a falling market?",
+                                 key="meth_step5_downside"):
+                    st.markdown(
+                        f"The bars above use a single beta of **{beta_pct:.0f}%**, measured across all "
+                        f"trading days at once. Estimated separately, this portfolio's beta is "
+                        f"**{downside['beta_up'] * 100:.0f}%** on days the AI basket rose and "
+                        f"**{downside['beta_down'] * 100:.0f}%** on days it fell "
+                        f"({downside['asymmetry'] * 100:+.0f} points), across "
+                        f"{downside['n_up_days']} up-days and {downside['n_down_days']} down-days."
+                    )
+                    st.markdown(
+                        f"Re-running the projection with those state-matched betas (down-day betas for "
+                        f"the loss scenarios) gives **{proj_dotcom_cond:+.0f}%** for dot-com-style "
+                        f"versus **{proj_dotcom:+.0f}%** above, **{proj_2022_cond:+.0f}%** versus "
+                        f"**{proj_2022:+.0f}%** for 2022-style, and **{proj_2008_cond:+.0f}%** versus "
+                        f"**{proj_2008:+.0f}%** for 2008-style."
+                    )
+                    st.caption(
+                        "Read the size of that gap as the cost of the symmetry assumption, not as a "
+                        "better forecast. Both versions are still linear projections of a calm-period "
+                        "beta onto a crash-sized shock. Across the reference portfolios the measured "
+                        "asymmetry is small and positive (a few points of extra down-day beta) -- and "
+                        "in 2022's own stressed year it nearly vanishes, because what actually "
+                        "happened was that both betas rose together rather than the down-day beta "
+                        "pulling away. The bars above stay on the symmetric beta so this app and the "
+                        "published Module 3 figures can't drift apart."
+                    )
+
             with st.expander("See methodology", key="meth_step5_methodology"):
                 st.caption(
                     "Linear projection: beta_AI x AI_shock + beta_rest x rest_shock, with no alpha or "

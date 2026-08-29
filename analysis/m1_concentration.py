@@ -224,7 +224,7 @@ AI-basket weight and a near-zero beta ({table.loc[SANITY_CHECK_TICKER, 'beta']:.
 
 def main() -> None:
     prices = load_prices()
-    simple_returns = prices.pct_change()
+    simple_returns = prices.pct_change(fill_method=None)
 
     # AI basket: equal-weight average of simple returns, only on days all 8 exist
     basket_simple = ai_basket_simple_returns(simple_returns)

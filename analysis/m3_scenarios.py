@@ -93,7 +93,7 @@ def run_sanity_checks(table: pd.DataFrame) -> None:
 
 
 def build_table(prices: pd.DataFrame) -> pd.DataFrame:
-    simple_returns = prices.pct_change()
+    simple_returns = prices.pct_change(fill_method=None)
     basket_simple = ai_basket_simple_returns(simple_returns)
     ai_log = to_log_returns(basket_simple)
     rsp_log = to_log_returns(simple_returns["RSP"])
